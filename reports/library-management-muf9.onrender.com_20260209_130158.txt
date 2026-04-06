@@ -1,0 +1,159 @@
+WEB RECON REPORT
+========================================
+
+Target: library-management-muf9.onrender.com
+IP Address: 216.24.57.251
+
+DNS DETAILS
+;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+library-management-muf9.onrender.com	canonical name = gcp-us-west1-1.origin.onrender.com.
+gcp-us-west1-1.origin.onrender.com	canonical name = gcp-us-west1-1.origin.onrender.com.cdn.cloudflare.net.
+Name:	gcp-us-west1-1.origin.onrender.com.cdn.cloudflare.net
+Address: 216.24.57.251
+Name:	gcp-us-west1-1.origin.onrender.com.cdn.cloudflare.net
+Address: 216.24.57.7
+
+
+
+OPEN PORTS
+Starting Nmap 7.80 ( https://nmap.org ) at 2026-02-09 13:01 EAT
+Nmap scan report for 216.24.57.251
+Host is up (0.065s latency).
+Not shown: 65531 filtered ports
+PORT     STATE SERVICE    VERSION
+80/tcp   open  tcpwrapped
+443/tcp  open  tcpwrapped
+2096/tcp open  tcpwrapped
+8080/tcp open  tcpwrapped
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 45.42 seconds
+
+
+WEB TECHNOLOGIES
+WhatWeb report for [1m[34mhttp://library-management-muf9.onrender.com/[0m
+Status    : 301 Moved Permanently
+Title     : [1m[33m<None>[0m
+IP        : 216.24.57.251
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mHTTPServer[0m[[1m[36mcloudflare[0m], [1mRedirectLocation[0m[[0m[22mhttps://library-management-muf9.onrender.com/[0m], [1mUncommonHeaders[0m[[0m[22mcf-ray,cf-cache-status,alt-svc[0m]
+
+Detected Plugins:
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mcloudflare[0m (from server string)
+
+[ [1mRedirectLocation[0m ]
+	HTTP Server string location. used with http-status 301 and 
+	302 
+
+	String       : [1m[36mhttps://library-management-muf9.onrender.com/[0m (from location)
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36mcf-ray,cf-cache-status,alt-svc[0m (from headers)
+
+HTTP Headers:
+	HTTP/1.1 301 Moved Permanently
+	Date: Mon, 09 Feb 2026 10:01:02 GMT
+	Content-Type: text/html; charset=utf-8
+	Content-Length: 80
+	Connection: close
+	CF-RAY: 9cb285ee89a373f9-JNB
+	Location: https://library-management-muf9.onrender.com/
+	cf-cache-status: DYNAMIC
+	Server: cloudflare
+	alt-svc: h3=":443"; ma=86400
+	
+WhatWeb report for [1m[34mhttps://library-management-muf9.onrender.com/[0m
+Status    : 200 OK
+Title     : [1m[33mLibrary Management[0m
+IP        : 216.24.57.251
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mBootstrap[0m, [1mHTML5[0m, [1mHTTPServer[0m[[1m[36mcloudflare[0m], [1mScript[0m, [1mStrict-Transport-Security[0m[[0m[22mmax-age=31536000; includeSubDomains; preload[0m], [1mUncommonHeaders[0m[[0m[22mcontent-security-policy,cross-origin-opener-policy,referrer-policy,rndr-id,x-content-type-options,x-render-origin-server,cf-cache-status,cf-ray,alt-svc[0m], [1mX-Frame-Options[0m[[0m[22mDENY[0m]
+
+Detected Plugins:
+[ [1mBootstrap[0m ]
+	Bootstrap is an open source toolkit for developing with 
+	HTML, CSS, and JS. 
+
+	Website     : https://getbootstrap.com/
+
+[ [1mHTML5[0m ]
+	HTML version 5, detected by the doctype declaration 
+
+
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mcloudflare[0m (from server string)
+
+[ [1mScript[0m ]
+	This plugin detects instances of script HTML elements and 
+	returns the script language/type. 
+
+
+[ [1mStrict-Transport-Security[0m ]
+	Strict-Transport-Security is an HTTP header that restricts 
+	a web browser from accessing a website without the security 
+	of the HTTPS protocol. 
+
+	String       : [1m[36mmax-age=31536000; includeSubDomains; preload[0m
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36mcontent-security-policy,cross-origin-opener-policy,referrer-policy,rndr-id,x-content-type-options,x-render-origin-server,cf-cache-status,cf-ray,alt-svc[0m (from headers)
+
+[ [1mX-Frame-Options[0m ]
+	This plugin retrieves the X-Frame-Options value from the 
+	HTTP header. - More Info: 
+	http://msdn.microsoft.com/en-us/library/cc288472%28VS.85%29.
+	aspx
+
+	String       : [1m[36mDENY[0m
+
+HTTP Headers:
+	HTTP/1.1 200 OK
+	Date: Mon, 09 Feb 2026 10:01:06 GMT
+	Content-Type: text/html; charset=utf-8
+	Transfer-Encoding: chunked
+	Connection: close
+	Content-Encoding: gzip
+	content-security-policy: img-src 'self' data: https://books.google.com https://res.cloudinary.com; default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.gstatic.com; connect-src 'self' https://cdn.jsdelivr.net https://www.googleapis.com; style-src 'self' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://fonts.googleapis.com
+	cross-origin-opener-policy: same-origin
+	referrer-policy: same-origin
+	rndr-id: eba166b4-94db-4fa6
+	strict-transport-security: max-age=31536000; includeSubDomains; preload
+	vary: Cookie
+	vary: Accept-Encoding
+	x-content-type-options: nosniff
+	x-frame-options: DENY
+	x-render-origin-server: gunicorn
+	cf-cache-status: DYNAMIC
+	Server: cloudflare
+	CF-RAY: 9cb285fe087f73fe-JNB
+	alt-svc: h3=":443"; ma=86400
+	
+
+
+CONCLUSION
+No critical exposure detected.

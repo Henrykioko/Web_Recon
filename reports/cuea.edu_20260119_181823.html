@@ -1,0 +1,123 @@
+
+    <h1>Web Recon Report</h1>
+    <h3>cuea.edu</h3>
+
+    <h4>DNS</h4>
+    <pre>;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	cuea.edu
+Address: 197.136.17.47
+
+</pre>
+
+    <h4>Nmap</h4>
+    <pre>Skipped (Safe profile)</pre>
+
+    <h4>WhatWeb</h4>
+    <pre>WhatWeb report for [1m[34mhttp://cuea.edu[0m
+Status    : 301 Moved Permanently
+Title     : [1m[33m301 Moved Permanently[0m
+IP        : 197.136.17.47
+Country   : [1m[31mKENYA, KE[0m
+
+Summary   : [1mHTTPServer[0m[[1m[31mUbuntu Linux[0m][[1m[36mnginx/1.18.0 (Ubuntu)[0m], [1mnginx[0m[[1m[32m1.18.0[0m], [1mRedirectLocation[0m[[0m[22mhttps://cuea.edu/[0m]
+
+Detected Plugins:
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	OS           : [1m[31mUbuntu Linux[0m
+	String       : [1m[36mnginx/1.18.0 (Ubuntu)[0m (from server string)
+
+[ [1mRedirectLocation[0m ]
+	HTTP Server string location. used with http-status 301 and 
+	302 
+
+	String       : [1m[36mhttps://cuea.edu/[0m (from location)
+
+[ [1mnginx[0m ]
+	Nginx (Engine-X) is a free, open-source, high-performance 
+	HTTP server and reverse proxy, as well as an IMAP/POP3 
+	proxy server. 
+
+	Version      : [1m[32m1.18.0[0m
+	Website     : http://nginx.net/
+
+HTTP Headers:
+	HTTP/1.1 301 Moved Permanently
+	Server: nginx/1.18.0 (Ubuntu)
+	Date: Mon, 19 Jan 2026 15:18:12 GMT
+	Content-Type: text/html
+	Content-Length: 178
+	Connection: close
+	Location: https://cuea.edu/
+	
+WhatWeb report for [1m[34mhttps://cuea.edu/[0m
+Status    : 200 OK
+Title     : [1m[33mCUEA - The Catholic University of Eastern Africa[0m
+IP        : 197.136.17.47
+Country   : [1m[31mKENYA, KE[0m
+
+Summary   : [1mHTML5[0m, [1mHTTPServer[0m[[1m[31mUbuntu Linux[0m][[1m[36mnginx/1.18.0 (Ubuntu)[0m], [1mMeta-Author[0m[[0m[22mCUEA ICT Department[0m], [1mnginx[0m[[1m[32m1.18.0[0m], [1mOpen-Graph-Protocol[0m[[1m[32mwebsite[0m], [1mScript[0m[[0m[22mmodule[0m]
+
+Detected Plugins:
+[ [1mHTML5[0m ]
+	HTML version 5, detected by the doctype declaration 
+
+
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	OS           : [1m[31mUbuntu Linux[0m
+	String       : [1m[36mnginx/1.18.0 (Ubuntu)[0m (from server string)
+
+[ [1mMeta-Author[0m ]
+	This plugin retrieves the author name from the meta name 
+	tag - info: 
+	http://www.webmarketingnow.com/tips/meta-tags-uncovered.html
+	#author
+
+	String       : [1m[36mCUEA ICT Department[0m
+
+[ [1mOpen-Graph-Protocol[0m ]
+	The Open Graph protocol enables you to integrate your Web 
+	pages into the social graph. It is currently designed for 
+	Web pages representing profiles of real-world things . 
+	things like movies, sports teams, celebrities, and 
+	restaurants. Including Open Graph tags on your Web page, 
+	makes your page equivalent to a Facebook Page. 
+
+	Version      : [1m[32mwebsite[0m
+
+[ [1mScript[0m ]
+	This plugin detects instances of script HTML elements and 
+	returns the script language/type. 
+
+	String       : [1m[36mmodule[0m
+
+[ [1mnginx[0m ]
+	Nginx (Engine-X) is a free, open-source, high-performance 
+	HTTP server and reverse proxy, as well as an IMAP/POP3 
+	proxy server. 
+
+	Version      : [1m[32m1.18.0[0m
+	Website     : http://nginx.net/
+
+HTTP Headers:
+	HTTP/1.1 200 OK
+	Server: nginx/1.18.0 (Ubuntu)
+	Date: Mon, 19 Jan 2026 15:18:16 GMT
+	Content-Type: text/html
+	Last-Modified: Mon, 19 Jan 2026 15:00:44 GMT
+	Transfer-Encoding: chunked
+	Connection: close
+	ETag: W/"696e471c-6be"
+	Content-Encoding: gzip
+	
+</pre>
+    

@@ -1,0 +1,34 @@
+WEB RECON REPORT
+========================================
+
+Target: hackthissite.org
+IP Address: 137.74.187.104
+
+DNS DETAILS
+;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	hackthissite.org
+Address: 137.74.187.104
+Name:	hackthissite.org
+Address: 137.74.187.102
+Name:	hackthissite.org
+Address: 137.74.187.100
+Name:	hackthissite.org
+Address: 137.74.187.103
+Name:	hackthissite.org
+Address: 137.74.187.101
+
+
+
+OPEN PORTS
+Skipped (Safe profile)
+
+WEB TECHNOLOGIES
+[1m[31mERROR Opening: http://hackthissite.org - Net::ReadTimeout[0m
+
+
+CONCLUSION
+No critical exposure detected.

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web Recon Tool</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<h2>Web Reconnaissance Tool</h2>
+
+<form method="POST">
+    <input type="text" name="domain" placeholder="example.com" required>
+
+    <select name="profile">
+        <option value="safe">Safe Scan</option>
+        <option value="normal">Normal Scan</option>
+        <option value="advanced">Advanced Scan</option>
+    </select>
+
+    <button type="submit">Scan</button>
+</form>
+
+{% if data.error %}
+<p style="color:red;"><b>{{ data.error }}</b></p>
+{% endif %}
+
+{% if data.domain %}
+<hr>
+
+<p><b>Domain:</b> {{ data.domain }}</p>
+<p><b>IP Address:</b> {{ data.ip }}</p>
+<p><b>Scan Profile:</b> {{ data.profile }}</p>
+<p><b>Time:</b> {{ data.timestamp }}</p>
+
+{% if data.summary %}
+<h3>🔎 Recon Summary</h3>
+<ul>
+    <li><b>Open Ports:</b> {{ data.summary.open_ports }}</li>
+    <li><b>Detected Services:</b> {{ data.summary.services }}</li>
+    <li><b>Risk Level:</b> {{ data.summary.risk }}</li>
+    <li><b>Reason:</b> {{ data.summary.reason }}</li>
+</ul>
+{% endif %}
+
+<h3>🌐 DNS Lookup</h3>
+<pre>{{ data.dns }}</pre>
+
+<h3>🧩 Subdomain Enumeration</h3>
+{% if data.subdomains %}
+<pre>
+{% for sub in data.subdomains %}
+{{ sub }}
+{% endfor %}
+</pre>
+{% else %}
+<p>No subdomains discovered.</p>
+{% endif %}
+
+<h3>📄 WHOIS</h3>
+<pre>{{ data.whois }}</pre>
+
+<h3>🛠 WhatWeb (Verbose)</h3>
+<pre>{{ data.whatweb }}</pre>
+
+<h3>🚪 Nmap Scan</h3>
+<pre>{{ data.nmap }}</pre>
+
+<h3>📑 Recon Reports</h3>
+<ul>
+    <li><a href="{{ url_for('download_report', filename=data.report_files.txt) }}">Download TXT Report</a></li>
+    <li><a href="{{ url_for('download_report', filename=data.report_files.html) }}">Download HTML Report</a></li>
+    <!-- Optional PDF link if PDF generation is added -->
+    <!-- <li><a href="{{ url_for('download_report', filename=data.report_files.pdf) }}">Download PDF Report</a></li> -->
+</ul>
+{% endif %}
+
+{% if data.past_scans %}
+<hr>
+<h3>🕘 Past Scans</h3>
+<ul>
+{% for scan in data.past_scans %}
+    <li>
+        <b>{{ scan.name }}</b><br>
+        <a href="{{ scan.html }}" target="_blank">View HTML Report</a> |
+        <a href="{{ scan.txt }}">Download TXT</a> |
+        <a href="{{ scan.txt.replace('.txt','.pdf') }}">Download PDF</a>
+    </li>
+{% endfor %}
+</ul>
+{% endif %}
+
+</body>
+</html>
