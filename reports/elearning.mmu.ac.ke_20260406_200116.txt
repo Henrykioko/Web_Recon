@@ -1,0 +1,41 @@
+WEB RECON REPORT
+========================================
+
+Target    : elearning.mmu.ac.ke
+IP Address: 197.136.17.114
+Profile   : safe
+Risk Level: Low
+Timestamp : 2026-04-06 20:01:16.760182
+
+SUBDOMAINS
+--------------------
+None found
+
+DNS
+--------------------
+;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	elearning.mmu.ac.ke
+Address: 197.136.17.114
+;; Got recursion not available from 172.26.80.1
+Name:	elearning.mmu.ac.ke
+Address: 64:ff9b::c588:1172
+
+
+
+NMAP
+--------------------
+Skipped (Safe profile)
+
+WHATWEB
+--------------------
+[1m[31mERROR Opening: http://elearning.mmu.ac.ke - execution expired[0m
+
+
+WHOIS
+--------------------
+connect: Network is unreachable
+

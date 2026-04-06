@@ -1,0 +1,54 @@
+WEB RECON REPORT
+========================================
+
+Target    : elearning.mmu.ac.ke
+IP Address: 197.136.17.114
+Profile   : advanced
+Risk Level: High
+Timestamp : 2026-04-06 20:06:36.580260
+
+SUBDOMAINS
+--------------------
+None found
+
+DNS
+--------------------
+;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	elearning.mmu.ac.ke
+Address: 197.136.17.114
+;; Got recursion not available from 172.26.80.1
+Name:	elearning.mmu.ac.ke
+Address: 64:ff9b::c588:1172
+
+
+
+NMAP
+--------------------
+Starting Nmap 7.80 ( https://nmap.org ) at 2026-04-06 23:05 EAT
+Nmap scan report for 197.136.17.114
+Host is up (0.11s latency).
+Not shown: 65531 filtered ports
+Some closed ports may be reported as filtered due to --defeat-rst-ratelimit
+PORT      STATE SERVICE  VERSION
+22/tcp    open  ssh      OpenSSH 7.4 (protocol 2.0)
+80/tcp    open  http     Apache httpd 2.4.6 ((CentOS) OpenSSL/1.0.2k-fips PHP/7.3.33)
+443/tcp   open  ssl/http Apache httpd 2.4.6 ((CentOS) OpenSSL/1.0.2k-fips PHP/7.3.33)
+10000/tcp open  http     MiniServ 1.974 (Webmin httpd)
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 86.93 seconds
+
+
+WHATWEB
+--------------------
+[1m[31mERROR Opening: http://elearning.mmu.ac.ke - execution expired[0m
+
+
+WHOIS
+--------------------
+connect: Network is unreachable
+

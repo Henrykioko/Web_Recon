@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRecon — Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root { --bg:#050a0e; --panel:#0b1520; --border:#0d3349; --green:#00ff99; --cyan:#00e5ff; --yellow:#ffcc00; --red:#ff4466; --orange:#ff8800; --text:#a8c8e0; --dim:#3a5570; }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { background:var(--bg); font-family:'Share Tech Mono',monospace; color:var(--text); min-height:100vh; }
+        body::before { content:''; position:fixed; inset:0; background-image:linear-gradient(rgba(0,229,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,0.02) 1px,transparent 1px); background-size:40px 40px; pointer-events:none; }
+        nav { position:relative; z-index:10; background:rgba(5,10,14,0.95); border-bottom:1px solid var(--border); padding:0 32px; display:flex; align-items:center; justify-content:space-between; height:56px; }
+        .nav-brand { font-family:'Rajdhani',sans-serif; font-size:1.3rem; font-weight:700; letter-spacing:4px; color:var(--green); text-shadow:0 0 12px rgba(0,255,153,0.4); }
+        .nav-links { display:flex; gap:24px; }
+        .nav-links a { color:var(--dim); text-decoration:none; font-size:0.78rem; letter-spacing:2px; text-transform:uppercase; transition:color 0.2s; }
+        .nav-links a:hover, .nav-links a.active { color:var(--cyan); }
+        .nav-user { font-size:0.75rem; color:var(--dim); }
+        .nav-user span { color:var(--green); }
+        .container { position:relative; z-index:1; max-width:1200px; margin:0 auto; padding:32px 24px; }
+        .page-title { font-family:'Rajdhani',sans-serif; font-size:1.6rem; font-weight:700; letter-spacing:4px; color:var(--green); margin-bottom:8px; }
+        .page-sub { font-size:0.72rem; color:var(--dim); letter-spacing:2px; margin-bottom:32px; }
+        .stat-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:28px; }
+        @media(max-width:768px){ .stat-grid{grid-template-columns:repeat(2,1fr);} }
+        .stat-card { background:var(--panel); border:1px solid var(--border); padding:20px 24px; position:relative; }
+        .stat-card::after { content:''; position:absolute; bottom:0; left:0; width:100%; height:2px; }
+        .stat-card.green::after  { background:var(--green); }
+        .stat-card.cyan::after   { background:var(--cyan); }
+        .stat-card.yellow::after { background:var(--yellow); }
+        .stat-card.red::after    { background:var(--red); }
+        .stat-label { font-size:0.65rem; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:8px; }
+        .stat-value { font-family:'Rajdhani',sans-serif; font-size:2.2rem; font-weight:700; line-height:1; }
+        .stat-card.green  .stat-value { color:var(--green); }
+        .stat-card.cyan   .stat-value { color:var(--cyan); }
+        .stat-card.yellow .stat-value { color:var(--yellow); }
+        .stat-card.red    .stat-value { color:var(--red); }
+        .charts-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:28px; }
+        @media(max-width:768px){ .charts-grid{grid-template-columns:1fr;} }
+        .chart-card { background:var(--panel); border:1px solid var(--border); padding:24px; }
+        .chart-card h3 { font-family:'Rajdhani',sans-serif; font-size:0.82rem; letter-spacing:3px; color:var(--cyan); text-transform:uppercase; margin-bottom:16px; }
+        .chart-wrap { position:relative; height:240px; }
+        .history-card { background:var(--panel); border:1px solid var(--border); padding:24px; }
+        .history-card h3 { font-family:'Rajdhani',sans-serif; font-size:0.82rem; letter-spacing:3px; color:var(--cyan); text-transform:uppercase; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+        table { width:100%; border-collapse:collapse; font-size:0.78rem; }
+        thead tr { border-bottom:1px solid var(--border); }
+        thead th { padding:10px 14px; text-align:left; font-family:'Rajdhani',sans-serif; font-size:0.68rem; letter-spacing:2px; color:var(--dim); text-transform:uppercase; }
+        tbody tr { border-bottom:1px solid rgba(13,51,73,0.4); transition:background 0.15s; }
+        tbody tr:hover { background:rgba(0,229,255,0.03); }
+        tbody td { padding:10px 14px; }
+        .risk-badge { display:inline-block; padding:2px 10px; font-family:'Rajdhani',sans-serif; font-size:0.75rem; font-weight:700; letter-spacing:1px; }
+        .risk-Low      { color:var(--green);  border:1px solid var(--green);  background:rgba(0,255,153,0.08); }
+        .risk-Medium   { color:var(--yellow); border:1px solid var(--yellow); background:rgba(255,204,0,0.08); }
+        .risk-High     { color:var(--orange); border:1px solid var(--orange); background:rgba(255,136,0,0.08); }
+        .risk-Critical { color:var(--red);    border:1px solid var(--red);    background:rgba(255,68,102,0.08); }
+        .tbl-link { color:var(--cyan); text-decoration:none; font-size:0.72rem; letter-spacing:1px; }
+        .tbl-link:hover { text-shadow:0 0 6px var(--cyan); }
+        .empty-state { color:var(--dim); font-size:0.82rem; letter-spacing:1px; padding:32px 0; text-align:center; }
+        ::-webkit-scrollbar { width:4px; }
+        ::-webkit-scrollbar-track { background:var(--bg); }
+        ::-webkit-scrollbar-thumb { background:var(--border); }
+    </style>
+</head>
+<body>
+<nav>
+    <div class="nav-brand">WEBRECON</div>
+    <div class="nav-links">
+        <a href="{{ url_for('index') }}">Scanner</a>
+        <a href="{{ url_for('dashboard') }}" class="active">Dashboard</a>
+    </div>
+    <div class="nav-user">
+        OP: <span>{{ user.username }}</span> &nbsp;|&nbsp;
+        <a href="{{ url_for('logout') }}" style="color:var(--dim);text-decoration:none;font-size:0.72rem;letter-spacing:1px;">LOGOUT</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="page-title">INTELLIGENCE DASHBOARD</div>
+    <div class="page-sub">// OPERATOR: {{ user.username }} &nbsp;|&nbsp; TOTAL SCANS: {{ scans|length }}</div>
+
+    <div class="stat-grid">
+        <div class="stat-card green"><div class="stat-label">Total Scans</div><div class="stat-value">{{ scans|length }}</div></div>
+        <div class="stat-card cyan"><div class="stat-label">Unique Domains</div><div class="stat-value">{{ scans|map(attribute='domain')|list|unique|list|length }}</div></div>
+        <div class="stat-card yellow"><div class="stat-label">High Risk</div><div class="stat-value">{{ risk_counts.get('High', 0) + risk_counts.get('Critical', 0) }}</div></div>
+        <div class="stat-card red"><div class="stat-label">Total Open Ports</div><div class="stat-value">{{ scans|sum(attribute='open_ports') }}</div></div>
+    </div>
+
+    <div class="charts-grid">
+        <div class="chart-card"><h3>// Risk Distribution</h3><div class="chart-wrap"><canvas id="riskChart"></canvas></div></div>
+        <div class="chart-card"><h3>// Scans Over Time</h3><div class="chart-wrap"><canvas id="timelineChart"></canvas></div></div>
+    </div>
+
+    <div class="history-card">
+        <h3>// All Scans</h3>
+        {% if scans %}
+        <table>
+            <thead><tr><th>Domain</th><th>IP</th><th>Profile</th><th>Open Ports</th><th>Risk</th><th>Timestamp</th><th>Reports</th></tr></thead>
+            <tbody>
+                {% for s in scans %}
+                <tr>
+                    <td style="color:var(--green)">{{ s.domain }}</td>
+                    <td style="color:var(--text)">{{ s.ip or 'N/A' }}</td>
+                    <td style="color:var(--dim)">{{ s.profile }}</td>
+                    <td style="color:var(--yellow)">{{ s.open_ports }}</td>
+                    <td><span class="risk-badge risk-{{ s.risk_level }}">{{ s.risk_level }}</span></td>
+                    <td style="color:var(--dim);font-size:0.72rem">{{ s.timestamp.strftime('%Y-%m-%d %H:%M') }}</td>
+                    <td>
+                        <a class="tbl-link" href="{{ url_for('view_report', filename=s.report_html) }}" target="_blank">HTML</a>
+                        &nbsp;
+                        <a class="tbl-link" href="{{ url_for('download_report', filename=s.report_txt) }}">TXT</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state">No scans yet. Run your first scan to populate the dashboard.</div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+(function(){
+    const gc='rgba(13,51,73,0.6)', lc='#3a5570';
+    const riskData = {{ risk_counts | tojson }};
+    const rLabels = Object.keys(riskData), rVals = Object.values(riskData);
+    const rColors = {Low:'#00ff99',Medium:'#ffcc00',High:'#ff8800',Critical:'#ff4466'};
+    new Chart(document.getElementById('riskChart'),{
+        type:'doughnut',
+        data:{ labels:rLabels, datasets:[{ data:rVals, backgroundColor:rLabels.map(l=>rColors[l]||'#00e5ff'), borderColor:'#050a0e', borderWidth:3 }] },
+        options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'right',labels:{color:'#a8c8e0',font:{family:"'Share Tech Mono'"},boxWidth:12}}} }
+    });
+    const scans = {{ scans | map(attribute='timestamp') | map('string') | list | tojson }};
+    const dc={};
+    scans.forEach(ts=>{ const d=ts.substring(0,10); dc[d]=(dc[d]||0)+1; });
+    const days=Object.keys(dc).sort().slice(-14), counts=days.map(d=>dc[d]);
+    new Chart(document.getElementById('timelineChart'),{
+        type:'line',
+        data:{ labels:days, datasets:[{ label:'Scans', data:counts, borderColor:'#00e5ff', backgroundColor:'rgba(0,229,255,0.08)', tension:0.3, pointBackgroundColor:'#00e5ff', pointRadius:4, fill:true }] },
+        options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}},
+            scales:{ x:{ticks:{color:lc,font:{size:10}},grid:{color:gc}}, y:{ticks:{color:lc,stepSize:1},grid:{color:gc},beginAtZero:true} } }
+    });
+})();
+</script>
+</body>
+</html>
