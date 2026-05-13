@@ -1,0 +1,192 @@
+WEB RECON REPORT
+========================================
+
+Target    : korvaventures.netlify.app
+IP Address: 35.157.26.135
+Profile   : advanced
+Risk Level: Low
+Timestamp : 2026-05-13 08:52:26.613388
+
+SUBDOMAINS
+--------------------
+www.korvaventures.netlify.app
+mail.korvaventures.netlify.app
+ftp.korvaventures.netlify.app
+smtp.korvaventures.netlify.app
+pop.korvaventures.netlify.app
+imap.korvaventures.netlify.app
+webmail.korvaventures.netlify.app
+remote.korvaventures.netlify.app
+vpn.korvaventures.netlify.app
+dev.korvaventures.netlify.app
+staging.korvaventures.netlify.app
+test.korvaventures.netlify.app
+api.korvaventures.netlify.app
+portal.korvaventures.netlify.app
+admin.korvaventures.netlify.app
+beta.korvaventures.netlify.app
+shop.korvaventures.netlify.app
+blog.korvaventures.netlify.app
+forum.korvaventures.netlify.app
+news.korvaventures.netlify.app
+static.korvaventures.netlify.app
+cdn.korvaventures.netlify.app
+media.korvaventures.netlify.app
+images.korvaventures.netlify.app
+secure.korvaventures.netlify.app
+login.korvaventures.netlify.app
+auth.korvaventures.netlify.app
+m.korvaventures.netlify.app
+mobile.korvaventures.netlify.app
+app.korvaventures.netlify.app
+dashboard.korvaventures.netlify.app
+docs.korvaventures.netlify.app
+support.korvaventures.netlify.app
+help.korvaventures.netlify.app
+status.korvaventures.netlify.app
+monitor.korvaventures.netlify.app
+git.korvaventures.netlify.app
+gitlab.korvaventures.netlify.app
+jenkins.korvaventures.netlify.app
+jira.korvaventures.netlify.app
+confluence.korvaventures.netlify.app
+wiki.korvaventures.netlify.app
+intranet.korvaventures.netlify.app
+internal.korvaventures.netlify.app
+server.korvaventures.netlify.app
+ns1.korvaventures.netlify.app
+ns2.korvaventures.netlify.app
+mx.korvaventures.netlify.app
+mx1.korvaventures.netlify.app
+mx2.korvaventures.netlify.app
+smtp1.korvaventures.netlify.app
+smtp2.korvaventures.netlify.app
+autodiscover.korvaventures.netlify.app
+
+DNS
+--------------------
+;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	korvaventures.netlify.app
+Address: 35.157.26.135
+Name:	korvaventures.netlify.app
+Address: 63.176.8.218
+;; Got recursion not available from 172.26.80.1
+Name:	korvaventures.netlify.app
+Address: 2a05:d014:58f:6200::258
+Name:	korvaventures.netlify.app
+Address: 2a05:d014:58f:6200::259
+
+
+
+NMAP
+--------------------
+Command timed out.
+
+WHATWEB
+--------------------
+WhatWeb report for [1m[34mhttp://korvaventures.netlify.app[0m
+Status    : 301 Moved Permanently
+Title     : [1m[33m<None>[0m
+IP        : 35.157.26.135
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mHTTPServer[0m[[1m[36mNetlify[0m], [1mRedirectLocation[0m[[0m[22mhttps://korvaventures.netlify.app/[0m], [1mUncommonHeaders[0m[[0m[22mx-nf-request-id[0m]
+
+Detected Plugins:
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mNetlify[0m (from server string)
+
+[ [1mRedirectLocation[0m ]
+	HTTP Server string location. used with http-status 301 and 
+	302 
+
+	String       : [1m[36mhttps://korvaventures.netlify.app/[0m (from location)
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36mx-nf-request-id[0m (from headers)
+
+HTTP Headers:
+	HTTP/1.1 301 Moved Permanently
+	Content-Type: text/plain; charset=utf-8
+	Date: Wed, 13 May 2026 08:50:33 GMT
+	Location: https://korvaventures.netlify.app/
+	Server: Netlify
+	X-Nf-Request-Id: 01KRG8FNAV8VNYW5S8J5CJEG8G
+	Content-Length: 49
+	Connection: close
+	
+WhatWeb report for [1m[34mhttps://korvaventures.netlify.app/[0m
+Status    : 200 OK
+Title     : [1m[33mBunifu Capital[0m
+IP        : 35.157.26.135
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mHTML5[0m, [1mHTTPServer[0m[[1m[36mNetlify[0m], [1mScript[0m[[0m[22mmodule[0m], [1mStrict-Transport-Security[0m[[0m[22mmax-age=31536000; includeSubDomains; preload[0m], [1mUncommonHeaders[0m[[0m[22mcache-status,x-nf-request-id[0m]
+
+Detected Plugins:
+[ [1mHTML5[0m ]
+	HTML version 5, detected by the doctype declaration 
+
+
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mNetlify[0m (from server string)
+
+[ [1mScript[0m ]
+	This plugin detects instances of script HTML elements and 
+	returns the script language/type. 
+
+	String       : [1m[36mmodule[0m
+
+[ [1mStrict-Transport-Security[0m ]
+	Strict-Transport-Security is an HTTP header that restricts 
+	a web browser from accessing a website without the security 
+	of the HTTPS protocol. 
+
+	String       : [1m[36mmax-age=31536000; includeSubDomains; preload[0m
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36mcache-status,x-nf-request-id[0m (from headers)
+
+HTTP Headers:
+	HTTP/1.1 200 OK
+	Accept-Ranges: bytes
+	Age: 548
+	Cache-Control: public,max-age=0,must-revalidate
+	Cache-Status: "Netlify Edge"; hit
+	Content-Length: 460
+	Content-Type: text/html; charset=UTF-8
+	Date: Wed, 13 May 2026 08:50:35 GMT
+	Etag: "d453440a72b2d9c1c8bc389ee81add47-ssl"
+	Server: Netlify
+	Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+	X-Nf-Request-Id: 01KRG8FQCH2RNQ7DB4V98AH8T3
+	Connection: close
+	
+
+
+WHOIS
+--------------------
+getaddrinfo(whois.nic.app): Name or service not known
+

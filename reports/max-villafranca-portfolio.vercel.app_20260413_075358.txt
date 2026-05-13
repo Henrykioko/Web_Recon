@@ -1,0 +1,196 @@
+WEB RECON REPORT
+========================================
+
+Target    : max-villafranca-portfolio.vercel.app
+IP Address: 64.29.17.67
+Profile   : advanced
+Risk Level: Low
+Timestamp : 2026-04-13 07:53:58.709994
+
+SUBDOMAINS
+--------------------
+www.max-villafranca-portfolio.vercel.app
+mail.max-villafranca-portfolio.vercel.app
+ftp.max-villafranca-portfolio.vercel.app
+smtp.max-villafranca-portfolio.vercel.app
+pop.max-villafranca-portfolio.vercel.app
+imap.max-villafranca-portfolio.vercel.app
+webmail.max-villafranca-portfolio.vercel.app
+remote.max-villafranca-portfolio.vercel.app
+vpn.max-villafranca-portfolio.vercel.app
+dev.max-villafranca-portfolio.vercel.app
+staging.max-villafranca-portfolio.vercel.app
+test.max-villafranca-portfolio.vercel.app
+api.max-villafranca-portfolio.vercel.app
+portal.max-villafranca-portfolio.vercel.app
+admin.max-villafranca-portfolio.vercel.app
+beta.max-villafranca-portfolio.vercel.app
+shop.max-villafranca-portfolio.vercel.app
+blog.max-villafranca-portfolio.vercel.app
+forum.max-villafranca-portfolio.vercel.app
+news.max-villafranca-portfolio.vercel.app
+static.max-villafranca-portfolio.vercel.app
+cdn.max-villafranca-portfolio.vercel.app
+media.max-villafranca-portfolio.vercel.app
+images.max-villafranca-portfolio.vercel.app
+secure.max-villafranca-portfolio.vercel.app
+login.max-villafranca-portfolio.vercel.app
+auth.max-villafranca-portfolio.vercel.app
+m.max-villafranca-portfolio.vercel.app
+mobile.max-villafranca-portfolio.vercel.app
+app.max-villafranca-portfolio.vercel.app
+dashboard.max-villafranca-portfolio.vercel.app
+docs.max-villafranca-portfolio.vercel.app
+support.max-villafranca-portfolio.vercel.app
+help.max-villafranca-portfolio.vercel.app
+status.max-villafranca-portfolio.vercel.app
+monitor.max-villafranca-portfolio.vercel.app
+git.max-villafranca-portfolio.vercel.app
+gitlab.max-villafranca-portfolio.vercel.app
+jenkins.max-villafranca-portfolio.vercel.app
+jira.max-villafranca-portfolio.vercel.app
+confluence.max-villafranca-portfolio.vercel.app
+wiki.max-villafranca-portfolio.vercel.app
+intranet.max-villafranca-portfolio.vercel.app
+internal.max-villafranca-portfolio.vercel.app
+server.max-villafranca-portfolio.vercel.app
+ns1.max-villafranca-portfolio.vercel.app
+ns2.max-villafranca-portfolio.vercel.app
+mx.max-villafranca-portfolio.vercel.app
+mx1.max-villafranca-portfolio.vercel.app
+mx2.max-villafranca-portfolio.vercel.app
+smtp1.max-villafranca-portfolio.vercel.app
+smtp2.max-villafranca-portfolio.vercel.app
+autodiscover.max-villafranca-portfolio.vercel.app
+
+DNS
+--------------------
+;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	max-villafranca-portfolio.vercel.app
+Address: 64.29.17.67
+Name:	max-villafranca-portfolio.vercel.app
+Address: 216.198.79.67
+;; Got recursion not available from 172.26.80.1
+Name:	max-villafranca-portfolio.vercel.app
+Address: 64:ff9b::401d:11c3
+Name:	max-villafranca-portfolio.vercel.app
+Address: 64:ff9b::d8c6:4fc3
+
+
+
+NMAP
+--------------------
+Command timed out.
+
+WHATWEB
+--------------------
+WhatWeb report for [1m[34mhttp://max-villafranca-portfolio.vercel.app/[0m
+Status    : 308 Permanent Redirect
+Title     : [1m[33m<None>[0m
+IP        : 64.29.17.67
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mHTTPServer[0m[[1m[36mVercel[0m], [1mRedirectLocation[0m[[0m[22mhttps://max-villafranca-portfolio.vercel.app/[0m]
+
+Detected Plugins:
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mVercel[0m (from server string)
+
+[ [1mRedirectLocation[0m ]
+	HTTP Server string location. used with http-status 301 and 
+	302 
+
+	String       : [1m[36mhttps://max-villafranca-portfolio.vercel.app/[0m (from location)
+
+HTTP Headers:
+	HTTP/1.0 308 Permanent Redirect
+	Content-Type: text/plain
+	Location: https://max-villafranca-portfolio.vercel.app/
+	Refresh: 0;url=https://max-villafranca-portfolio.vercel.app/
+	server: Vercel
+	
+WhatWeb report for [1m[34mhttps://max-villafranca-portfolio.vercel.app/[0m
+Status    : 200 OK
+Title     : [1m[33mMax Villafranca - Portfolio[0m
+IP        : 64.29.17.67
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mEmail[0m[[0m[22mup.work.max.v@gmail.com[0m], [1mHTML5[0m, [1mHTTPServer[0m[[1m[36mVercel[0m], [1mScript[0m, [1mStrict-Transport-Security[0m[[0m[22mmax-age=63072000; includeSubDomains; preload[0m], [1mUncommonHeaders[0m[[0m[22maccess-control-allow-origin,x-matched-path,x-vercel-cache,x-vercel-id[0m]
+
+Detected Plugins:
+[ [1mEmail[0m ]
+	Extract email addresses. Find valid email address and 
+	syntactically invalid email addresses from mailto: link 
+	tags. We match syntactically invalid links containing 
+	mailto: to catch anti-spam email addresses, eg. bob at 
+	gmail.com. This uses the simplified email regular 
+	expression from 
+	http://www.regular-expressions.info/email.html for valid 
+	email address matching. 
+
+	String       : [1m[36mup.work.max.v@gmail.com[0m
+	String       : [1m[36mup.work.max.v@gmail.com[0m
+
+[ [1mHTML5[0m ]
+	HTML version 5, detected by the doctype declaration 
+
+
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mVercel[0m (from server string)
+
+[ [1mScript[0m ]
+	This plugin detects instances of script HTML elements and 
+	returns the script language/type. 
+
+
+[ [1mStrict-Transport-Security[0m ]
+	Strict-Transport-Security is an HTTP header that restricts 
+	a web browser from accessing a website without the security 
+	of the HTTPS protocol. 
+
+	String       : [1m[36mmax-age=63072000; includeSubDomains; preload[0m
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36maccess-control-allow-origin,x-matched-path,x-vercel-cache,x-vercel-id[0m (from headers)
+
+HTTP Headers:
+	HTTP/1.1 200 OK
+	Access-Control-Allow-Origin: *
+	Age: 553128
+	Cache-Control: public, max-age=0, must-revalidate
+	Content-Disposition: inline
+	Content-Encoding: gzip
+	Content-Type: text/html; charset=utf-8
+	Date: Mon, 13 Apr 2026 07:52:11 GMT
+	Etag: W/"2498b6db245943f6e9a22e9f91100e05"
+	Server: Vercel
+	Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+	Vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch
+	X-Matched-Path: /
+	X-Vercel-Cache: HIT
+	X-Vercel-Id: cpt1::cv8mx-1776066731597-32364e1cfc1d
+	Connection: close
+	Transfer-Encoding: chunked
+	
+
+
+WHOIS
+--------------------
+getaddrinfo(whois.nic.app): Name or service not known
+

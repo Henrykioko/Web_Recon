@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Recon – korvaventures.netlify.app</title>
+    <style>
+        body { font-family: monospace; margin: 40px; background: #0d0d0d; color: #00ff99; }
+        h1, h2 { color: #33ccff; }
+        pre { background: #1a1a1a; padding: 10px; border-left: 3px solid #00ff99; overflow-x: auto; }
+        p { color: #ccc; }
+    </style>
+</head>
+<body>
+    <h1>Web Recon Report — korvaventures.netlify.app</h1>
+    <p>IP: 35.157.26.135 | Profile: advanced | Risk: Low | 2026-05-13 08:49:46.366224</p>
+    <h2>Subdomains</h2><p>www.korvaventures.netlify.app<br>mail.korvaventures.netlify.app<br>ftp.korvaventures.netlify.app<br>smtp.korvaventures.netlify.app<br>pop.korvaventures.netlify.app<br>imap.korvaventures.netlify.app<br>webmail.korvaventures.netlify.app<br>remote.korvaventures.netlify.app<br>vpn.korvaventures.netlify.app<br>dev.korvaventures.netlify.app<br>staging.korvaventures.netlify.app<br>test.korvaventures.netlify.app<br>api.korvaventures.netlify.app<br>portal.korvaventures.netlify.app<br>admin.korvaventures.netlify.app<br>beta.korvaventures.netlify.app<br>shop.korvaventures.netlify.app<br>blog.korvaventures.netlify.app<br>forum.korvaventures.netlify.app<br>news.korvaventures.netlify.app<br>static.korvaventures.netlify.app<br>cdn.korvaventures.netlify.app<br>media.korvaventures.netlify.app<br>images.korvaventures.netlify.app<br>secure.korvaventures.netlify.app<br>login.korvaventures.netlify.app<br>auth.korvaventures.netlify.app<br>m.korvaventures.netlify.app<br>mobile.korvaventures.netlify.app<br>app.korvaventures.netlify.app<br>dashboard.korvaventures.netlify.app<br>docs.korvaventures.netlify.app<br>support.korvaventures.netlify.app<br>help.korvaventures.netlify.app<br>status.korvaventures.netlify.app<br>monitor.korvaventures.netlify.app<br>git.korvaventures.netlify.app<br>gitlab.korvaventures.netlify.app<br>jenkins.korvaventures.netlify.app<br>jira.korvaventures.netlify.app<br>confluence.korvaventures.netlify.app<br>wiki.korvaventures.netlify.app<br>intranet.korvaventures.netlify.app<br>internal.korvaventures.netlify.app<br>server.korvaventures.netlify.app<br>ns1.korvaventures.netlify.app<br>ns2.korvaventures.netlify.app<br>mx.korvaventures.netlify.app<br>mx1.korvaventures.netlify.app<br>mx2.korvaventures.netlify.app<br>smtp1.korvaventures.netlify.app<br>smtp2.korvaventures.netlify.app<br>autodiscover.korvaventures.netlify.app</p>
+    <h2>DNS</h2><pre>;; Got recursion not available from 172.26.80.1
+Server:		172.26.80.1
+Address:	172.26.80.1#53
+
+Non-authoritative answer:
+Name:	korvaventures.netlify.app
+Address: 35.157.26.135
+Name:	korvaventures.netlify.app
+Address: 63.176.8.218
+;; Got recursion not available from 172.26.80.1
+Name:	korvaventures.netlify.app
+Address: 2a05:d014:58f:6200::259
+Name:	korvaventures.netlify.app
+Address: 2a05:d014:58f:6200::258
+
+</pre>
+    <h2>Nmap</h2><pre>Command timed out.</pre>
+    <h2>WhatWeb</h2><pre>WhatWeb report for [1m[34mhttp://korvaventures.netlify.app[0m
+Status    : 301 Moved Permanently
+Title     : [1m[33m<None>[0m
+IP        : 35.157.26.135
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mHTTPServer[0m[[1m[36mNetlify[0m], [1mRedirectLocation[0m[[0m[22mhttps://korvaventures.netlify.app/[0m], [1mUncommonHeaders[0m[[0m[22mx-nf-request-id[0m]
+
+Detected Plugins:
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mNetlify[0m (from server string)
+
+[ [1mRedirectLocation[0m ]
+	HTTP Server string location. used with http-status 301 and 
+	302 
+
+	String       : [1m[36mhttps://korvaventures.netlify.app/[0m (from location)
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36mx-nf-request-id[0m (from headers)
+
+HTTP Headers:
+	HTTP/1.1 301 Moved Permanently
+	Content-Type: text/plain; charset=utf-8
+	Date: Wed, 13 May 2026 08:47:53 GMT
+	Location: https://korvaventures.netlify.app/
+	Server: Netlify
+	X-Nf-Request-Id: 01KRG8AS8KWEJ7KA5KTWE5PB01
+	Content-Length: 49
+	Connection: close
+	
+WhatWeb report for [1m[34mhttps://korvaventures.netlify.app/[0m
+Status    : 200 OK
+Title     : [1m[33mBunifu Capital[0m
+IP        : 35.157.26.135
+Country   : [1m[31mUNITED STATES, US[0m
+
+Summary   : [1mHTML5[0m, [1mHTTPServer[0m[[1m[36mNetlify[0m], [1mScript[0m[[0m[22mmodule[0m], [1mStrict-Transport-Security[0m[[0m[22mmax-age=31536000; includeSubDomains; preload[0m], [1mUncommonHeaders[0m[[0m[22mcache-status,x-nf-request-id[0m]
+
+Detected Plugins:
+[ [1mHTML5[0m ]
+	HTML version 5, detected by the doctype declaration 
+
+
+[ [1mHTTPServer[0m ]
+	HTTP server header string. This plugin also attempts to 
+	identify the operating system from the server header. 
+
+	String       : [1m[36mNetlify[0m (from server string)
+
+[ [1mScript[0m ]
+	This plugin detects instances of script HTML elements and 
+	returns the script language/type. 
+
+	String       : [1m[36mmodule[0m
+
+[ [1mStrict-Transport-Security[0m ]
+	Strict-Transport-Security is an HTTP header that restricts 
+	a web browser from accessing a website without the security 
+	of the HTTPS protocol. 
+
+	String       : [1m[36mmax-age=31536000; includeSubDomains; preload[0m
+
+[ [1mUncommonHeaders[0m ]
+	Uncommon HTTP server headers. The blacklist includes all 
+	the standard headers and many non standard but common ones. 
+	Interesting but fairly common headers should have their own 
+	plugins, eg. x-powered-by, server and x-aspnet-version. 
+	Info about headers can be found at www.http-stats.com 
+
+	String       : [1m[36mcache-status,x-nf-request-id[0m (from headers)
+
+HTTP Headers:
+	HTTP/1.1 200 OK
+	Accept-Ranges: bytes
+	Age: 389
+	Cache-Control: public,max-age=0,must-revalidate
+	Cache-Status: "Netlify Edge"; hit
+	Content-Length: 460
+	Content-Type: text/html; charset=UTF-8
+	Date: Wed, 13 May 2026 08:47:56 GMT
+	Etag: "d453440a72b2d9c1c8bc389ee81add47-ssl"
+	Server: Netlify
+	Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+	X-Nf-Request-Id: 01KRG8AVTZZZQQSX5G1AA1944T
+	Connection: close
+	
+</pre>
+    <h2>WHOIS</h2><pre>getaddrinfo(whois.nic.app): Name or service not known
+</pre>
+</body>
+</html>

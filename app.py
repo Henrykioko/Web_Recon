@@ -7,7 +7,7 @@ import subprocess
 import requests
 import threading
 from datetime import datetime
-from functools import wraps, lru_cache
+from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, render_template, request, send_from_directory, redirect, url_for, session, jsonify, flash
@@ -71,7 +71,6 @@ def login_required(f):
         if "user_id" not in session:
             flash("Please log in first.", "warning")
             return redirect(url_for("login"))
-        # ✅ Fix: verify user actually exists in DB
         user = db.session.get(User, session["user_id"])
         if user is None:
             session.clear()
@@ -83,28 +82,23 @@ def login_required(f):
 def current_user():
     if "user_id" not in session:
         return None
-    # ✅ Modern SQLAlchemy 2.0 — no legacy warning
     return db.session.get(User, session["user_id"])
 
 
 # ── Utilities ────────────────────────────────────────────
 def run(cmd):
-    # ✅ Longer timeout for full port scans
-    timeout = 600 if "65535" in cmd else 120
     try:
         return subprocess.check_output(
             cmd,
             stderr=subprocess.STDOUT,
             text=True,
-            timeout=timeout,
-            env={**os.environ, "LANG": "C", "LC_ALL": "C"}  # ✅ faster output parsing
+            env={**os.environ, "LANG": "C", "LC_ALL": "C"}
         )
     except subprocess.CalledProcessError as e:
         return e.output
     except FileNotFoundError:
         return f"Tool not found: {cmd[0]}"
-    except subprocess.TimeoutExpired:
-        return "Command timed out."
+
 
 def validate_domain(domain):
     if not domain:
@@ -155,7 +149,6 @@ _cve_cache = {}
 _cve_lock  = threading.Lock()
 
 def fetch_single_cve(service):
-    # ✅ In-memory cache — avoids repeat API calls per service
     with _cve_lock:
         if service in _cve_cache:
             return _cve_cache[service]
@@ -207,7 +200,6 @@ def fetch_single_cve(service):
 
 def lookup_cves(services: list) -> list:
     all_cves = []
-    # ✅ Fetch all services simultaneously
     with ThreadPoolExecutor(max_workers=5) as executor:
         results = executor.map(fetch_single_cve, services[:5])
         for r in results:
@@ -237,7 +229,6 @@ def gobuster_available():
 
 def run_gobuster(domain, profile="safe"):
     wordlist = WORDLISTS.get(profile, WORDLISTS["safe"])
-    # Fallback wordlist paths if seclists not installed
     if not os.path.exists(wordlist):
         wordlist = "/usr/share/wordlists/dirb/common.txt"
     if not os.path.exists(wordlist):
@@ -247,9 +238,9 @@ def run_gobuster(domain, profile="safe"):
         "gobuster", "dns",
         "-d", domain,
         "-w", wordlist,
-        "-t", "50",        # 50 threads
+        "-t", "50",
         "--timeout", "3s",
-        "-q",              # quiet mode
+        "-q",
         "--no-color"
     ])
 
@@ -267,19 +258,17 @@ def run_socket_method(domain):
     def check(sub):
         hostname = f"{sub}.{domain}"
         try:
-            socket.setdefaulttimeout(2)       # ✅ 2s max per lookup
+            socket.setdefaulttimeout(2)
             socket.gethostbyname(hostname)
             return hostname
         except socket.error:
             return None
 
-    # ✅ All 50 DNS checks run simultaneously
     with ThreadPoolExecutor(max_workers=20) as executor:
         results = executor.map(check, FALLBACK_WORDLIST)
         return [r for r in results if r is not None]
 
 def enumerate_subdomains(domain, profile="safe"):
-    # ✅ Use gobuster if available, fall back to socket method
     if gobuster_available():
         result = run_gobuster(domain, profile)
         if result:
@@ -393,11 +382,11 @@ def index():
         if not validate_domain(domain):
             error = "Invalid domain format."
         else:
-            # ── Step 1: DNS first (IP needed for nmap) ──────
+            # Step 1: DNS first (need IP for nmap/whois)
             dns_out = run(["nslookup", domain])
             ip      = extract_ip(dns_out)
 
-            # ── Step 2: nmap command based on profile ───────
+            # Step 2: nmap based on profile
             def get_nmap():
                 if profile == "normal" and ip:
                     return run([
@@ -415,9 +404,9 @@ def index():
                     ])
                 return "Skipped (Safe profile)"
 
-            # ── Step 3: Run everything in parallel ──────────
+            # Step 3: Run whois, whatweb, subdomains, nmap in parallel
             with ThreadPoolExecutor(max_workers=4) as executor:
-                f_whois   = executor.submit(run, ["whois", domain])
+                f_whois   = executor.submit(run, ["whois", ip if ip else domain])
                 f_whatweb = executor.submit(run, ["whatweb", "-v", domain])
                 f_subs    = executor.submit(enumerate_subdomains, domain, profile)
                 f_nmap    = executor.submit(get_nmap)
@@ -427,11 +416,11 @@ def index():
                 subdomains  = f_subs.result()
                 nmap_out    = f_nmap.result()
 
-            # ── Step 4: Analyze + CVE (after nmap done) ─────
+            # Step 4: Analyze nmap + CVE lookup
             summary = analyze_nmap(nmap_out)
             cves    = lookup_cves(summary["services"]) if summary["services"] else []
 
-            # ── Step 5: Save to database ─────────────────────
+            # Step 5: Save to DB
             timestamp = datetime.utcnow()
             base_name = f"{domain}_{timestamp.strftime('%Y%m%d_%H%M%S')}"
 
@@ -477,7 +466,7 @@ def index():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    user  = current_user()
+    user = current_user()
     if user is None:
         session.clear()
         return redirect(url_for("login"))
