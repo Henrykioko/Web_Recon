@@ -52,38 +52,135 @@
     {% set r = data.result %}
     {% set cves = data.cves %}
     {% set subs = data.subs %}
+    {% set intel = data.intel %}
+    {% set sc = intel.severity_counts %}
 
+    <!-- Meta Bar -->
     <div class="meta">
+        <div class="meta-item"><div class="meta-label">Domain</div><div class="meta-val">{{ s.domain }}</div></div>
+        <div class="meta-item"><div class="meta-label">IP</div><div class="meta-val">{{ s.ip or '—' }}</div></div>
+        <div class="meta-item"><div class="meta-label">Profile</div><div class="meta-val">{{ s.profile }}</div></div>
+        <div class="meta-item"><div class="meta-label">Open ports</div><div class="meta-val">{{ r.count }}</div></div>
+        <div class="meta-item"><div class="meta-label">Subdomains</div><div class="meta-val">{{ subs|length }}</div></div>
         <div class="meta-item">
-            <div class="meta-label">Domain</div>
-            <div class="meta-val">{{ s.domain }}</div>
+            <div class="meta-label">Risk level</div>
+            <div class="meta-val"><span class="risk risk-{{ intel.risk_label }}">{{ intel.risk_label }}</span></div>
         </div>
-        <div class="meta-item">
-            <div class="meta-label">IP</div>
-            <div class="meta-val">{{ s.ip or '—' }}</div>
+        <div class="meta-item"><div class="meta-label">Scanned</div><div class="meta-val" style="color:#444;font-size:0.8rem">{{ s.ran_at.strftime('%Y-%m-%d %H:%M') }}</div></div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         RISK SCORE PANEL
+    ═══════════════════════════════════════════════════════════════ -->
+    <div class="risk-score-panel risk-panel-{{ intel.risk_label|lower }}">
+        <div class="risk-score-left">
+            <div class="risk-score-number">{{ intel.risk_score }}</div>
+            <div class="risk-score-denom">/100</div>
+            <div class="risk-score-label">Risk Score</div>
         </div>
-        <div class="meta-item">
-            <div class="meta-label">Profile</div>
-            <div class="meta-val">{{ s.profile }}</div>
+        <div class="risk-score-center">
+            <div class="risk-score-bar-wrap">
+                <div class="risk-score-bar" style="width:{{ intel.risk_score }}%"></div>
+            </div>
+            <div class="sev-pills">
+                <span class="sev-pill sev-critical">{{ sc.Critical }} Critical</span>
+                <span class="sev-pill sev-high">{{ sc.High }} High</span>
+                <span class="sev-pill sev-medium">{{ sc.Medium }} Medium</span>
+                <span class="sev-pill sev-low">{{ sc.Low }} Low</span>
+                <span class="sev-pill sev-info">{{ sc.Info }} Info</span>
+            </div>
+            <div class="risk-score-note">
+                Higher score = more vulnerable. 0 is safest, 100 is critically exposed.
+            </div>
         </div>
-        <div class="meta-item">
-            <div class="meta-label">Open ports</div>
-            <div class="meta-val">{{ r.count }}</div>
-        </div>
-        <div class="meta-item">
-            <div class="meta-label">Subdomains</div>
-            <div class="meta-val">{{ subs | length }}</div>
-        </div>
-        <div class="meta-item">
-            <div class="meta-label">Risk</div>
-            <div class="meta-val"><span class="risk risk-{{ r.risk }}">{{ r.risk }}</span></div>
-        </div>
-        <div class="meta-item">
-            <div class="meta-label">Scanned</div>
-            <div class="meta-val" style="color:#444;font-size:0.8rem">{{ s.ran_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div class="risk-score-right">
+            <div class="findings-count">{{ intel.total_findings }}</div>
+            <div class="findings-label">Total Findings</div>
         </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════════════════════════
+         REMEDIATION PLAN
+    ═══════════════════════════════════════════════════════════════ -->
+    {% if intel.remediation_plan %}
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Remediation Plan — fix these in order to reduce your risk score fastest</div>
+        <div class="plan-list">
+            {% for step in intel.remediation_plan %}
+            <div class="plan-step">
+                <div class="plan-num">{{ loop.index }}</div>
+                <div class="plan-body">
+                    <div class="plan-title">{{ step.title }}</div>
+                    <div class="plan-rec">{{ step.recommendation }}</div>
+                    <div class="plan-impact">
+                        Reduces score by <strong>{{ step.reduces_by }}</strong> points
+                        → new score: <strong>{{ step.score_after }}/100</strong>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         INTELLIGENCE FINDINGS
+    ═══════════════════════════════════════════════════════════════ -->
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Security Findings — {{ intel.total_findings }} total</div>
+
+        <!-- Filter tabs -->
+        <div class="filter-tabs" id="filterTabs">
+            <button class="filter-tab active" data-filter="all">All ({{ intel.total_findings }})</button>
+            {% if sc.Critical > 0 %}<button class="filter-tab" data-filter="Critical">Critical ({{ sc.Critical }})</button>{% endif %}
+            {% if sc.High > 0 %}<button class="filter-tab" data-filter="High">High ({{ sc.High }})</button>{% endif %}
+            {% if sc.Medium > 0 %}<button class="filter-tab" data-filter="Medium">Medium ({{ sc.Medium }})</button>{% endif %}
+            {% if sc.Low > 0 %}<button class="filter-tab" data-filter="Low">Low ({{ sc.Low }})</button>{% endif %}
+        </div>
+
+        <div class="findings-list" id="findingsList">
+            {% for f in intel.findings %}
+            <div class="finding-card finding-{{ f.risk|lower }}" data-risk="{{ f.risk }}">
+                <div class="finding-header">
+                    <span class="finding-badge badge-{{ f.risk|lower }}">{{ f.risk }}</span>
+                    <span class="finding-title">{{ f.title }}</span>
+                    <span class="finding-source">{{ f.source }}</span>
+                    <button class="finding-toggle" onclick="toggleFinding(this)">▼</button>
+                </div>
+                <div class="finding-body">
+                    <div class="finding-row">
+                        <div class="finding-row-label">Explanation</div>
+                        <div class="finding-row-val">{{ f.explanation }}</div>
+                    </div>
+                    {% if f.attack %}
+                    <div class="finding-row">
+                        <div class="finding-row-label">Attack types</div>
+                        <div class="finding-row-val finding-attack">{{ f.attack }}</div>
+                    </div>
+                    {% endif %}
+                    {% if f.version %}
+                    <div class="finding-row">
+                        <div class="finding-row-label">Version detected</div>
+                        <div class="finding-row-val" style="color:#3B9EE8;font-family:monospace">{{ f.version }}</div>
+                    </div>
+                    {% endif %}
+                    {% if f.expiry_date is defined and f.expiry_date %}
+                    <div class="finding-row">
+                        <div class="finding-row-label">Expiry date</div>
+                        <div class="finding-row-val">{{ f.expiry_date }}{% if f.days_left is defined %} ({{ f.days_left }} days){% endif %}</div>
+                    </div>
+                    {% endif %}
+                    <div class="finding-row finding-row-last">
+                        <div class="finding-row-label">Recommendation</div>
+                        <div class="finding-row-val finding-rec">{{ f.recommendation }}</div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Charts -->
     <div class="grid-2">
         <div class="card">
             <div class="card-title">Port overview</div>
@@ -95,28 +192,9 @@
         </div>
     </div>
 
+    <!-- CVE Table -->
     <div class="card" style="margin-bottom:16px">
-        <div class="card-title">Subdomains — {{ subs | length }} found</div>
-        {% if subs %}
-        <table>
-            <thead><tr><th>#</th><th>Subdomain</th><th>Status</th></tr></thead>
-            <tbody>
-                {% for sub in subs %}
-                <tr>
-                    <td style="color:#333;width:40px">{{ loop.index }}</td>
-                    <td style="color:#ccc">{{ sub }}</td>
-                    <td style="color:#4caf50;font-size:0.75rem">live</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p class="empty">No subdomains found.</p>
-        {% endif %}
-    </div>
-
-    <div class="card" style="margin-bottom:16px">
-        <div class="card-title">CVE lookup — {{ cves | length }} results</div>
+        <div class="card-title">CVE lookup — {{ cves|length }} results</div>
         {% if cves %}
         <table>
             <thead><tr><th>ID</th><th>Service</th><th>Severity</th><th>Score</th><th>Description</th></tr></thead>
@@ -137,6 +215,28 @@
         {% endif %}
     </div>
 
+    <!-- Subdomains -->
+    <div class="card" style="margin-bottom:16px">
+        <div class="card-title">Subdomains — {{ subs|length }} found</div>
+        {% if subs %}
+        <table>
+            <thead><tr><th>#</th><th>Subdomain</th><th>Status</th></tr></thead>
+            <tbody>
+                {% for sub in subs %}
+                <tr>
+                    <td style="color:#333;width:40px">{{ loop.index }}</td>
+                    <td style="color:#ccc">{{ sub }}</td>
+                    <td style="color:#4caf50;font-size:0.75rem">live</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="empty">No subdomains found.</p>
+        {% endif %}
+    </div>
+
+    <!-- Raw Output -->
     <div class="grid-2" style="margin-bottom:16px">
         <div class="card"><div class="card-title">DNS</div><pre>{{ s.dns }}</pre></div>
         <div class="card"><div class="card-title">WHOIS</div><pre>{{ s.whois }}</pre></div>
@@ -144,21 +244,21 @@
         <div class="card"><div class="card-title">WhatWeb</div><pre>{{ s.whatweb }}</pre></div>
     </div>
 
+    <!-- Report Links -->
     <div class="report-row">
         <a href="{{ url_for('download_report', filename=s.report_txt) }}" class="btn btn-ghost">Download TXT</a>
-        <a href="{{ url_for('view_report', filename=s.report_html) }}" target="_blank" class="btn btn-ghost">View HTML</a>
+        <a href="{{ url_for('view_report', filename=s.report_html) }}" target="_blank" class="btn btn-ghost">View HTML Report</a>
         <a href="{{ url_for('download_report', filename=s.report_html) }}" class="btn btn-ghost">Download HTML</a>
     </div>
 
     <script src="{{ url_for('static', filename='js/index.js') }}"></script>
-    <script>
-        drawCharts({{ r.count }}, {{ r.services | tojson }});
-    </script>
+    <script>drawCharts({{ r.count }}, {{ r.services|tojson }});</script>
 
     {% else %}
     <script src="{{ url_for('static', filename='js/index.js') }}"></script>
     {% endif %}
 
+    <!-- History -->
     {% if history %}
     <div class="history-card">
         <div class="card-title" style="margin-bottom:14px">Recent scans</div>
@@ -166,7 +266,7 @@
         <div class="history-item">
             <div>
                 <div class="h-domain">{{ h.domain }}</div>
-                <div class="h-meta">{{ h.ran_at.strftime('%Y-%m-%d %H:%M') }} &middot; {{ h.profile }} &middot; {{ h.port_count }} ports</div>
+                <div class="h-meta">{{ h.ran_at.strftime('%Y-%m-%d %H:%M') }} · {{ h.profile }} · {{ h.port_count }} ports · Score: {{ h.risk_score }}/100</div>
             </div>
             <div style="display:flex;align-items:center;gap:12px">
                 <span class="risk risk-{{ h.risk }}">{{ h.risk }}</span>
@@ -181,5 +281,47 @@
     {% endif %}
 
 </div>
+
+<script>
+// Filter tabs
+document.querySelectorAll('.filter-tab').forEach(btn => {
+    btn.addEventListener('click', function() {
+        document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        const filter = this.dataset.filter;
+        document.querySelectorAll('.finding-card').forEach(card => {
+            card.style.display = (filter === 'all' || card.dataset.risk === filter) ? '' : 'none';
+        });
+    });
+});
+
+// Toggle finding body open/closed
+function toggleFinding(btn) {
+    const card = btn.closest('.finding-card');
+    card.classList.toggle('open');
+    btn.textContent = card.classList.contains('open') ? '▲' : '▼';
+}
+
+// Auto-open Critical and High findings
+document.querySelectorAll('.finding-card').forEach(card => {
+    const risk = card.dataset.risk;
+    if (risk === 'Critical' || risk === 'High') {
+        card.classList.add('open');
+        const btn = card.querySelector('.finding-toggle');
+        if (btn) btn.textContent = '▲';
+    }
+});
+
+// Scan form overlay
+const msgs = ['Running DNS lookup...','Checking subdomains...','Running Nmap...','Analysing technologies...','Fetching CVEs...','Running intelligence engine...','Almost done...'];
+let i = 0;
+document.getElementById('scan-form').addEventListener('submit', () => {
+    document.getElementById('overlay').classList.add('on');
+    setInterval(() => {
+        if (i < msgs.length) document.getElementById('overlay-msg').textContent = msgs[i++];
+    }, 5000);
+});
+</script>
+
 </body>
 </html>
