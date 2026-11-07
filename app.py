@@ -22,7 +22,7 @@ base = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(base, 'recon.db')}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-db      = SQLAlchemy(app)
+db = SQLAlchemy(app)
 reports = os.path.join(base, "reports")
 os.makedirs(reports, exist_ok=True)
 
@@ -31,11 +31,11 @@ os.makedirs(reports, exist_ok=True)
 
 class User(db.Model):
     __tablename__ = "users"
-    id            = db.Column(db.Integer, primary_key=True)
-    username      = db.Column(db.String(80), unique=True, nullable=False)
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
-    joined        = db.Column(db.DateTime, default=datetime.utcnow)
-    scans         = db.relationship("Scan", backref="user", lazy=True)
+    joined = db.Column(db.DateTime, default=datetime.utcnow)
+    scans = db.relationship("Scan", backref="user", lazy=True)
 
     def set_password(self, pw):
         self.password_hash = generate_password_hash(pw)
@@ -45,25 +45,25 @@ class User(db.Model):
 
 
 class Scan(db.Model):
-    __tablename__  = "scans"
-    id             = db.Column(db.Integer, primary_key=True)
-    user_id        = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    domain         = db.Column(db.String(255), nullable=False)
-    ip             = db.Column(db.String(50))
-    profile        = db.Column(db.String(50))
-    risk           = db.Column(db.String(20))
-    port_count     = db.Column(db.Integer, default=0)
-    services       = db.Column(db.String(500))
-    dns            = db.Column(db.Text)
-    whois          = db.Column(db.Text)
-    nmap           = db.Column(db.Text)
-    whatweb        = db.Column(db.Text)
-    cves           = db.Column(db.Text)
-    subdomains     = db.Column(db.Text)
-    intelligence   = db.Column(db.Text)
-    report_txt     = db.Column(db.String(255))
-    report_html    = db.Column(db.String(255))
-    ran_at         = db.Column(db.DateTime, default=datetime.utcnow)
+    __tablename__ = "scans"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    domain = db.Column(db.String(255), nullable=False)
+    ip = db.Column(db.String(50))
+    profile = db.Column(db.String(50))
+    risk = db.Column(db.String(20))
+    port_count = db.Column(db.Integer, default=0)
+    services = db.Column(db.String(500))
+    dns = db.Column(db.Text)
+    whois = db.Column(db.Text)
+    nmap = db.Column(db.Text)
+    whatweb = db.Column(db.Text)
+    cves = db.Column(db.Text)
+    subdomains = db.Column(db.Text)
+    intelligence = db.Column(db.Text)
+    report_txt = db.Column(db.String(255))
+    report_html = db.Column(db.String(255))
+    ran_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -145,12 +145,6 @@ def get_ip(dns_output):
     return ""
 
 
-# ── WhatWeb runner ────────────────────────────────────────────────────────────
-# WhatWeb needs a proper URL (https:// or http://), not a bare domain.
-# We try HTTPS first; if stdout is empty we fall back to HTTP.
-# shell_combined() is used so non-zero exit codes (triggered by SSL issues)
-# never cause the output to be discarded.
-
 def run_whatweb(domain):
     for scheme in ("https", "http"):
         url = f"{scheme}://{domain}"
@@ -168,7 +162,7 @@ def parse_nmap(output):
     ports, svcs, versions = [], [], []
     for line in output.splitlines():
         if "/tcp" in line and "open" in line:
-            parts    = line.split()
+            parts = line.split()
             port_num = parts[0].split("/")[0]
             ports.append(port_num)
             svc = parts[2] if len(parts) > 2 else "unknown"
@@ -176,7 +170,8 @@ def parse_nmap(output):
             svcs.append(svc)
             versions.append({"port": port_num, "service": svc, "version": ver})
 
-    risky = {"22","3306","3389","5432","6379","27017","21","23","445","1433","8080","8443"}
+    risky = {"22", "3306", "3389", "5432", "6379",
+             "27017", "21", "23", "445", "1433", "8080", "8443"}
     if any(p in risky for p in ports):
         risk, reason = "High", "Sensitive ports are exposed."
     elif ports:
@@ -197,7 +192,8 @@ def parse_nmap(output):
 # ── CVE lookup ────────────────────────────────────────────────────────────────
 
 cve_cache = {}
-cve_lock  = threading.Lock()
+cve_lock = threading.Lock()
+
 
 def fetch_cves(service):
     with cve_lock:
@@ -222,12 +218,13 @@ def fetch_cves(service):
             for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
                 entries = cve.get("metrics", {}).get(key, [])
                 if entries:
-                    d        = entries[0].get("cvssData", {})
+                    d = entries[0].get("cvssData", {})
                     severity = d.get("baseSeverity", "N/A")
-                    score    = d.get("baseScore", "N/A")
+                    score = d.get("baseScore", "N/A")
                     break
             desc = next(
-                (d["value"] for d in cve.get("descriptions", []) if d.get("lang") == "en"),
+                (d["value"]
+                 for d in cve.get("descriptions", []) if d.get("lang") == "en"),
                 "No description."
             )
             found.append({
@@ -256,12 +253,12 @@ def get_cves(services):
 # ── Subdomain enumeration ─────────────────────────────────────────────────────
 
 fallback_subs = [
-    "www","mail","ftp","smtp","pop","imap","webmail","remote","vpn","dev",
-    "staging","test","api","portal","admin","beta","shop","blog","forum",
-    "news","static","cdn","media","images","secure","login","auth","m",
-    "mobile","app","dashboard","docs","support","help","status","monitor",
-    "git","gitlab","jenkins","jira","confluence","wiki","intranet","server",
-    "ns1","ns2","mx","mx1","mx2","smtp1","smtp2","autodiscover"
+    "www", "mail", "ftp", "smtp", "pop", "imap", "webmail", "remote", "vpn", "dev",
+    "staging", "test", "api", "portal", "admin", "beta", "shop", "blog", "forum",
+    "news", "static", "cdn", "media", "images", "secure", "login", "auth", "m",
+    "mobile", "app", "dashboard", "docs", "support", "help", "status", "monitor",
+    "git", "gitlab", "jenkins", "jira", "confluence", "wiki", "intranet", "server",
+    "ns1", "ns2", "mx", "mx1", "mx2", "smtp1", "smtp2", "autodiscover"
 ]
 
 wordlists = {
@@ -269,6 +266,7 @@ wordlists = {
     "normal":   "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
     "advanced": "/usr/share/seclists/Discovery/DNS/subdomains-top1million.txt"
 }
+
 
 def socket_scan(domain):
     def check(sub):
@@ -282,14 +280,15 @@ def socket_scan(domain):
     with ThreadPoolExecutor(max_workers=20) as ex:
         return [r for r in ex.map(check, fallback_subs) if r]
 
+
 def gobuster_scan(domain, profile):
     wl = wordlists.get(profile, wordlists["safe"])
     if not os.path.exists(wl):
         wl = "/usr/share/wordlists/dirb/common.txt"
     if not os.path.exists(wl):
         return []
-    out = shell(["gobuster","dns","-d",domain,"-w",wl,
-                 "-t","50","--timeout","3s","-q","--no-color"])
+    out = shell(["gobuster", "dns", "-d", domain, "-w", wl,
+                 "-t", "50", "--timeout", "3s", "-q", "--no-color"])
     found = []
     for line in out.splitlines():
         line = line.strip()
@@ -299,6 +298,7 @@ def gobuster_scan(domain, profile):
             found.append(line)
     return found
 
+
 def get_subdomains(domain, profile):
     if shutil.which("gobuster"):
         r = gobuster_scan(domain, profile)
@@ -307,12 +307,7 @@ def get_subdomains(domain, profile):
     return socket_scan(domain)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# INTELLIGENCE ENGINE  (no scoring — findings only)
-# ══════════════════════════════════════════════════════════════════════════════
-
 # ── Port knowledge base ───────────────────────────────────────────────────────
-
 PORT_INTEL = {
     "21": {
         "name": "FTP",
@@ -520,9 +515,9 @@ HEADER_INTEL = {
 def analyse_ports(nmap_result):
     findings = []
     for v in nmap_result.get("versions", []):
-        port  = v["port"]
-        svc   = v["service"]
-        ver   = v["version"]
+        port = v["port"]
+        svc = v["service"]
+        ver = v["version"]
         intel = PORT_INTEL.get(port)
         if not intel:
             findings.append({
@@ -559,7 +554,7 @@ def analyse_whatweb(whatweb_output):
     We extract all plugin names and match them against our knowledge base.
     We also check the raw text for header strings.
     """
-    findings   = []
+    findings = []
     text_lower = whatweb_output.lower()
 
     # Extract all plugin names from [ PluginName ] patterns
@@ -599,7 +594,8 @@ def analyse_whatweb(whatweb_output):
             header.replace("-", ""),
             header.replace("-", " "),
         ]
-        present = any(v in plugin_names or v in text_lower for v in header_variants)
+        present = any(
+            v in plugin_names or v in text_lower for v in header_variants)
         if not present:
             findings.append({
                 "source":         "Headers",
@@ -616,7 +612,7 @@ def analyse_whatweb(whatweb_output):
 
 def analyse_whois(whois_output, domain):
     findings = []
-    text     = whois_output.lower()
+    text = whois_output.lower()
 
     expiry_patterns = [
         r"expir(?:y|ation|es)[^\n:]*:\s*([^\n]+)",
@@ -635,7 +631,7 @@ def analyse_whois(whois_output, domain):
         try:
             from dateutil import parser as dateparser
             expiry_date = dateparser.parse(expiry_str, ignoretz=True)
-            days_left   = (expiry_date - datetime.utcnow()).days
+            days_left = (expiry_date - datetime.utcnow()).days
 
             if days_left < 0:
                 findings.append({
@@ -736,7 +732,7 @@ def analyse_whois(whois_output, domain):
 
 def analyse_dns(dns_output, domain):
     findings = []
-    text     = dns_output.lower()
+    text = dns_output.lower()
 
     if "wildcard" in text or "* " in dns_output:
         findings.append({
@@ -770,8 +766,8 @@ def analyse_dns(dns_output, domain):
 
 
 def analyse_subdomains(subdomains, domain):
-    findings  = []
-    flagged   = []
+    findings = []
+    flagged = []
     sensitive = {
         "admin":      ("Administrative Panel Exposed",        "Admin portals are high-value targets. A compromise gives full control over the application.", "High"),
         "vpn":        ("VPN Portal Exposed",                  "An exposed VPN portal is subject to credential brute-force. Compromise gives internal network access.", "High"),
@@ -828,7 +824,7 @@ def cve_findings(cve_list):
                 "risk":           "Critical",
                 "explanation":    cve["desc"],
                 "attack":         f"CVSS score {cve.get('score')} — see NVD for full details",
-                "recommendation": f"Patch or update {svc} immediately to address {cid}. Check the vendor advisory at {cve.get('url','')}",
+                "recommendation": f"Patch or update {svc} immediately to address {cid}. Check the vendor advisory at {cve.get('url', '')}",
             })
         elif score_val >= 7.0:
             findings.append({
@@ -858,7 +854,7 @@ def cve_findings(cve_list):
 def run_intelligence(domain, nmap_result, whatweb_output,
                      whois_output, dns_output, subdomains, cve_list):
 
-    all_findings  = []
+    all_findings = []
     all_findings += analyse_ports(nmap_result)
     all_findings += analyse_whatweb(whatweb_output)
     all_findings += analyse_whois(whois_output, domain)
@@ -873,7 +869,8 @@ def run_intelligence(domain, nmap_result, whatweb_output,
             risk_label = lvl
             break
 
-    severity_counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0, "Info": 0}
+    severity_counts = {"Critical": 0, "High": 0,
+                       "Medium": 0, "Low": 0, "Info": 0}
     for f in all_findings:
         r = f.get("risk", "Info")
         if r in severity_counts:
@@ -916,7 +913,7 @@ def save_txt(scan, filename, intel):
 
 
 def save_html(scan, filename, intel):
-    path       = os.path.join(reports, filename)
+    path = os.path.join(reports, filename)
     risk_color = {
         "Critical": "#E74C3C", "High":   "#E67E22",
         "Medium":   "#F39C12", "Low":    "#27AE60", "Info": "#3498DB"
@@ -925,11 +922,13 @@ def save_html(scan, filename, intel):
 
     findings_html = ""
     for fd in intel["findings"]:
-        col         = risk_color.get(fd["risk"], "#888")
-        attack_row  = f"<tr><td><b>Attack types</b></td><td>{fd.get('attack','')}</td></tr>" if fd.get("attack") else ""
-        version_row = f"<tr><td><b>Version</b></td><td>{fd.get('version','')}</td></tr>" if fd.get("version") else ""
-        exp_row     = fd.get("expiry_date","")
-        expiry_row  = f"<tr><td><b>Expiry</b></td><td>{exp_row} ({fd.get('days_left','')} days)</td></tr>" if exp_row else ""
+        col = risk_color.get(fd["risk"], "#888")
+        attack_row = f"<tr><td><b>Attack types</b></td><td>{fd.get('attack', '')}</td></tr>" if fd.get(
+            "attack") else ""
+        version_row = f"<tr><td><b>Version</b></td><td>{fd.get('version', '')}</td></tr>" if fd.get(
+            "version") else ""
+        exp_row = fd.get("expiry_date", "")
+        expiry_row = f"<tr><td><b>Expiry</b></td><td>{exp_row} ({fd.get('days_left', '')} days)</td></tr>" if exp_row else ""
         findings_html += f"""
         <div class="finding">
             <div class="finding-header" style="border-left:4px solid {col}">
@@ -944,8 +943,8 @@ def save_html(scan, filename, intel):
             </table>
         </div>"""
 
-    sc   = intel["severity_counts"]
-    subs = (scan.subdomains or "None").replace("\n","<br>")
+    sc = intel["severity_counts"]
+    subs = (scan.subdomains or "None").replace("\n", "<br>")
 
     html = f"""<!DOCTYPE html>
 <html><head><title>Security Report — {scan.domain}</title>
@@ -1039,19 +1038,19 @@ def logout():
 @app.route("/", methods=["GET", "POST"])
 @login_required
 def index():
-    user  = get_user()
-    data  = {}
+    user = get_user()
+    data = {}
     error = None
 
     if request.method == "POST":
-        domain  = request.form["domain"].strip()
+        domain = request.form["domain"].strip()
         profile = request.form.get("profile", "safe")
 
         if not valid_domain(domain):
             error = "Invalid domain."
         else:
             dns_out = shell(["nslookup", domain])
-            ip      = get_ip(dns_out)
+            ip = get_ip(dns_out)
 
             def run_nmap():
                 if profile == "normal" and ip:
@@ -1065,41 +1064,42 @@ def index():
                 return "Skipped (safe profile)"
 
             with ThreadPoolExecutor(max_workers=4) as ex:
-                fw  = ex.submit(shell,          ["whois", ip if ip else domain])
+                fw = ex.submit(shell,          ["whois", ip if ip else domain])
                 fww = ex.submit(run_whatweb,    domain)
-                fs  = ex.submit(get_subdomains, domain, profile)
-                fn  = ex.submit(run_nmap)
-                whois_out   = fw.result()
+                fs = ex.submit(get_subdomains, domain, profile)
+                fn = ex.submit(run_nmap)
+                whois_out = fw.result()
                 whatweb_out = fww.result()
-                subs        = fs.result()
-                nmap_out    = fn.result()
+                subs = fs.result()
+                nmap_out = fn.result()
 
-            result   = parse_nmap(nmap_out)
-            cve_list = get_cves(result["services"]) if result["services"] else []
-            intel    = run_intelligence(domain, result, whatweb_out,
-                                        whois_out, dns_out, subs, cve_list)
+            result = parse_nmap(nmap_out)
+            cve_list = get_cves(
+                result["services"]) if result["services"] else []
+            intel = run_intelligence(domain, result, whatweb_out,
+                                     whois_out, dns_out, subs, cve_list)
 
-            now       = datetime.utcnow()
+            now = datetime.utcnow()
             base_name = f"{domain}_{now.strftime('%Y%m%d_%H%M%S')}"
 
             scan = Scan(
-                user_id      = user.id,
-                domain       = domain,
-                ip           = ip,
-                profile      = profile,
-                risk         = intel["risk_label"],
-                port_count   = result["count"],
-                services     = ", ".join(result["services"]),
-                dns          = dns_out,
-                whois        = whois_out,
-                nmap         = nmap_out,
-                whatweb      = whatweb_out,
-                cves         = json.dumps(cve_list),
-                subdomains   = "\n".join(subs),
-                intelligence = json.dumps(intel),
-                report_txt   = base_name + ".txt",
-                report_html  = base_name + ".html",
-                ran_at       = now
+                user_id=user.id,
+                domain=domain,
+                ip=ip,
+                profile=profile,
+                risk=intel["risk_label"],
+                port_count=result["count"],
+                services=", ".join(result["services"]),
+                dns=dns_out,
+                whois=whois_out,
+                nmap=nmap_out,
+                whatweb=whatweb_out,
+                cves=json.dumps(cve_list),
+                subdomains="\n".join(subs),
+                intelligence=json.dumps(intel),
+                report_txt=base_name + ".txt",
+                report_html=base_name + ".html",
+                ran_at=now
             )
             db.session.add(scan)
             db.session.commit()
@@ -1128,7 +1128,7 @@ def index():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    user  = get_user()
+    user = get_user()
     scans = (Scan.query
              .filter_by(user_id=user.id)
              .order_by(Scan.ran_at.desc()).all())
@@ -1145,6 +1145,7 @@ def dashboard():
 @login_required
 def view_report(filename):
     return send_from_directory(reports, filename)
+
 
 @app.route("/report/download/<filename>")
 @login_required
