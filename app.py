@@ -1,59 +1,109 @@
+
 import os
 import re
 import json
+import html
 import shutil
 import socket
+import platform
 import subprocess
-import requests
 import threading
+import tempfile
+import xml.etree.ElementTree as ET
+
+from pathlib import Path
 from datetime import datetime
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 
-from flask import (Flask, render_template, request, send_from_directory,
-                   redirect, url_for, session, flash)
+import requests
+
+from flask import (
+    Flask, render_template, request, send_from_directory,
+    redirect, url_for, session, flash, abort
+)
+
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import or_
 from werkzeug.security import generate_password_hash, check_password_hash
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
-base = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(base, 'recon.db')}"
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+app = Flask(__name__)
+
+app.secret_key = os.environ.get(
+    "SECRET_KEY",
+    "dev-secret-key-change-this"
+)
+
+BASE_DIR = Path(__file__).resolve().parent
+REPORTS_DIR = BASE_DIR / "reports"
+
+REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = (
+    f"sqlite:///{BASE_DIR / 'recon.db'}"
+)
+
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "connect_args": {"check_same_thread": False}
+}
 
 db = SQLAlchemy(app)
-reports = os.path.join(base, "reports")
-os.makedirs(reports, exist_ok=True)
+
+IS_WINDOWS = platform.system().lower() == "windows"
+
+TOOL_TIMEOUT = 180
+NMAP_TIMEOUT = 600
+GOBUSTER_TIMEOUT = 300
+WHATWEB_TIMEOUT = 90
+
+NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+
+NVD_API_KEY = os.environ.get("NVD_API_KEY")
+
+HTTP_TIMEOUT = 15
 
 
-# ── Models ────────────────────────────────────────────────────────────────────
+# ============================================================
+# DATABASE MODELS
+# ============================================================
 
 class User(db.Model):
     __tablename__ = "users"
+
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     joined = db.Column(db.DateTime, default=datetime.utcnow)
+
     scans = db.relationship("Scan", backref="user", lazy=True)
 
-    def set_password(self, pw):
-        self.password_hash = generate_password_hash(pw)
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
 
-    def check_password(self, pw):
-        return check_password_hash(self.password_hash, pw)
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
 
 class Scan(db.Model):
     __tablename__ = "scans"
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
     domain = db.Column(db.String(255), nullable=False)
     ip = db.Column(db.String(50))
     profile = db.Column(db.String(50))
     risk = db.Column(db.String(20))
+
     port_count = db.Column(db.Integer, default=0)
     services = db.Column(db.String(500))
+
     dns = db.Column(db.Text)
     whois = db.Column(db.Text)
     nmap = db.Column(db.Text)
@@ -61,1102 +111,2900 @@ class Scan(db.Model):
     cves = db.Column(db.Text)
     subdomains = db.Column(db.Text)
     intelligence = db.Column(db.Text)
+
     report_txt = db.Column(db.String(255))
     report_html = db.Column(db.String(255))
+
     ran_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
-# ── Auth ──────────────────────────────────────────────────────────────────────
+# ============================================================
+# AUTHENTICATION
+# ============================================================
 
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
+
         if "uid" not in session:
             flash("Please log in first.", "warning")
             return redirect(url_for("login"))
+
         user = db.session.get(User, session["uid"])
+
         if not user:
             session.clear()
-            flash("Session expired.", "warning")
+            flash("Session expired. Please log in again.", "warning")
             return redirect(url_for("login"))
+
         return f(*args, **kwargs)
+
     return wrapper
 
 
 def get_user():
+
     if "uid" not in session:
         return None
+
     return db.session.get(User, session["uid"])
 
 
-# ── Shell runners ─────────────────────────────────────────────────────────────
+# ============================================================
+# TOOL DETECTION AND COMMAND EXECUTION
+# ============================================================
 
-def shell(cmd):
-    try:
-        return subprocess.check_output(
-            cmd, stderr=subprocess.STDOUT, text=True,
-            env={**os.environ, "LANG": "C", "LC_ALL": "C"}
+def find_tool(name):
+    """
+    Find an installed executable.
+    """
+
+    return shutil.which(name)
+
+
+def tool_installed(name):
+    return find_tool(name) is not None
+
+
+def build_command(command):
+    """
+    Prepare a command for Windows or Linux.
+
+    Windows .CMD and .BAT files are launched through cmd.exe.
+    """
+
+    if not command:
+        return command
+
+    command = [str(part) for part in command]
+
+    executable = command[0]
+
+    if IS_WINDOWS and executable.lower().endswith((".cmd", ".bat")):
+
+        return [
+            "cmd.exe",
+            "/d",
+            "/c",
+            subprocess.list2cmdline(command)
+        ]
+
+    return command
+
+
+def run_command(command, timeout=TOOL_TIMEOUT):
+    """
+    Run external commands safely.
+    """
+
+    if not command:
+        return "No command provided."
+
+    command = [str(part) for part in command]
+
+    executable = command[0]
+
+    resolved = find_tool(executable)
+
+    if resolved:
+        command[0] = resolved
+
+    elif not Path(executable).is_file():
+        return (
+            f"{executable} is not installed "
+            "or is not available in PATH."
         )
-    except subprocess.CalledProcessError as e:
-        return e.output or ""
-    except FileNotFoundError:
-        return f"{cmd[0]} is not installed."
 
-
-def shell_combined(cmd):
-    """
-    Run a command and always return its output regardless of exit code.
-    Merges stdout and stderr. Used for tools like WhatWeb that exit non-zero
-    on SSL/network warnings even when they produced valid findings output.
-    """
     try:
+
+        launch_command = build_command(command)
+
         result = subprocess.run(
-            cmd,
+            launch_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={**os.environ, "LANG": "C", "LC_ALL": "C"}
+            errors="replace",
+            timeout=timeout,
+            shell=False,
+            env=os.environ.copy()
         )
+
         output = result.stdout or ""
-        # Fall back to stderr only if stdout is completely empty
+
+        if result.stderr:
+            output += ("\n" if output else "") + result.stderr
+
         if not output.strip():
-            output = result.stderr or ""
-        return output
+
+            return (
+                f"Command completed with exit code "
+                f"{result.returncode}, but returned no output."
+            )
+
+        return output.strip()
+
+    except subprocess.TimeoutExpired:
+
+        return f"Command timed out after {timeout} seconds."
+
     except FileNotFoundError:
-        return "whatweb is not installed."
-    except Exception as e:
-        return f"Error running {cmd[0]}: {e}"
+
+        return f"{executable} could not be found."
+
+    except Exception as exc:
+
+        return f"Error running {executable}: {exc}"
 
 
-def valid_domain(domain):
-    if not domain:
-        return False
-    if any(x in domain for x in ["localhost", "internal", "local"]):
-        return False
-    return re.match(r"^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.[A-Za-z]{2,})+$", domain)
+def tool_status():
 
-
-def get_ip(dns_output):
-    for line in dns_output.splitlines():
-        if "Address:" in line and "#53" not in line and "Server:" not in line:
-            parts = line.split()
-            if parts:
-                return parts[-1]
-    return ""
-
-
-def run_whatweb(domain):
-    for scheme in ("https", "http"):
-        url = f"{scheme}://{domain}"
-        result = shell_combined([
-            "whatweb", "--color=never", "-v", "-a", "3", "--no-errors", url
-        ])
-        if result and "is not installed" not in result and result.strip():
-            return result
-    return "WhatWeb did not return usable output."
-
-
-# ── Nmap parser ───────────────────────────────────────────────────────────────
-
-def parse_nmap(output):
-    ports, svcs, versions = [], [], []
-    for line in output.splitlines():
-        if "/tcp" in line and "open" in line:
-            parts = line.split()
-            port_num = parts[0].split("/")[0]
-            ports.append(port_num)
-            svc = parts[2] if len(parts) > 2 else "unknown"
-            ver = " ".join(parts[3:]) if len(parts) > 3 else ""
-            svcs.append(svc)
-            versions.append({"port": port_num, "service": svc, "version": ver})
-
-    risky = {"22", "3306", "3389", "5432", "6379",
-             "27017", "21", "23", "445", "1433", "8080", "8443"}
-    if any(p in risky for p in ports):
-        risk, reason = "High", "Sensitive ports are exposed."
-    elif ports:
-        risk, reason = "Medium", "Multiple open ports found."
-    else:
-        risk, reason = "Low", "No notable services detected."
+    tools = ["nmap", "whatweb", "whois", "gobuster"]
 
     return {
-        "count":    len(ports),
-        "ports":    ports,
-        "services": list(set(svcs)),
-        "versions": versions,
-        "risk":     risk,
-        "reason":   reason
+        name: {
+            "installed": tool_installed(name),
+            "path": find_tool(name)
+        }
+        for name in tools
     }
 
 
-# ── CVE lookup ────────────────────────────────────────────────────────────────
+# ============================================================
+# DOMAIN VALIDATION AND DNS
+# ============================================================
+
+def valid_domain(domain):
+
+    if not domain:
+        return False
+
+    domain = domain.strip().lower()
+
+    if len(domain) > 253:
+        return False
+
+    if domain.endswith("."):
+        domain = domain[:-1]
+
+    if domain in {"localhost", "internal"}:
+        return False
+
+    if any(
+        part in domain.split(".")
+        for part in ["local", "localhost", "internal"]
+    ):
+        return False
+
+    pattern = (
+        r"^(?=.{1,253}$)"
+        r"(?:[a-zA-Z0-9]"
+        r"(?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+"
+        r"[a-zA-Z]{2,63}$"
+    )
+
+    return bool(re.match(pattern, domain))
+
+
+def resolve_ip(domain):
+
+    try:
+
+        results = socket.getaddrinfo(
+            domain,
+            None,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM
+        )
+
+        addresses = []
+
+        for result in results:
+
+            address = result[4][0]
+
+            if address not in addresses:
+                addresses.append(address)
+
+        return addresses[0] if addresses else ""
+
+    except socket.gaierror:
+        return ""
+
+    except Exception:
+        return ""
+
+
+def get_dns(domain):
+
+    output = []
+
+    if IS_WINDOWS:
+
+        commands = [
+            ["nslookup", domain]
+        ]
+
+    else:
+
+        commands = []
+
+        if tool_installed("dig"):
+
+            commands.append([
+                "dig", domain, "A", "+noall", "+answer"
+            ])
+
+        if tool_installed("nslookup"):
+
+            commands.append([
+                "nslookup", domain
+            ])
+
+    for command in commands:
+
+        result = run_command(command, timeout=15)
+
+        if result and "not installed" not in result.lower():
+            output.append(result)
+
+    ip = resolve_ip(domain)
+
+    if ip:
+        output.append(f"\nResolved IPv4 address: {ip}")
+    else:
+        output.append("\nNo IPv4 address could be resolved.")
+
+    return "\n\n".join(output)
+
+
+# ============================================================
+# WORDLIST DISCOVERY
+# ============================================================
+
+def get_wordlist(profile):
+
+    custom = os.environ.get("WEBRECON_WORDLIST")
+
+    candidates = []
+
+    if custom:
+        candidates.append(Path(custom))
+
+    if IS_WINDOWS:
+
+        candidates.extend([
+            Path(
+                r"C:\SecLists\Discovery\DNS"
+                r"\subdomains-top1million-5000.txt"
+            ),
+            Path(
+                r"C:\SecLists\Discovery\DNS"
+                r"\subdomains-top1million-20000.txt"
+            ),
+            Path(
+                r"C:\Tools\SecLists\Discovery\DNS"
+                r"\subdomains-top1million-5000.txt"
+            ),
+            Path.home() / "SecLists" / "Discovery" / "DNS" /
+            "subdomains-top1million-5000.txt"
+        ])
+
+    else:
+
+        candidates.extend([
+            Path(
+                "/usr/share/seclists/Discovery/DNS/"
+                "subdomains-top1million-5000.txt"
+            ),
+            Path(
+                "/usr/share/seclists/Discovery/DNS/"
+                "subdomains-top1million-20000.txt"
+            ),
+            Path(
+                "/usr/share/seclists/Discovery/DNS/"
+                "subdomains-top1million.txt"
+            ),
+            Path("/usr/share/wordlists/dnsmap.txt")
+        ])
+
+    existing = [
+        path for path in candidates
+        if path.is_file()
+    ]
+
+    if not existing:
+        return None
+
+    if profile == "advanced":
+        return str(existing[-1])
+
+    if profile == "normal":
+        return str(existing[min(1, len(existing) - 1)])
+
+    return str(existing[0])
+
+
+# ============================================================
+# WHATWEB
+# ============================================================
+
+def run_whatweb(domain):
+
+    whatweb_path = find_tool("whatweb")
+
+    if not whatweb_path:
+
+        return (
+            "WhatWeb is not installed or "
+            "is not available in PATH."
+        )
+
+    for scheme in ("https", "http"):
+
+        url = f"{scheme}://{domain}"
+
+        result = run_command(
+            [
+                whatweb_path,
+                "--color=never",
+                "-v",
+                "-a",
+                "3",
+                "--no-errors",
+                url
+            ],
+            timeout=WHATWEB_TIMEOUT
+        )
+
+        if not result:
+            continue
+
+        lower_result = result.lower()
+
+        if (
+            "not installed" not in lower_result
+            and "could not be found" not in lower_result
+            and "timed out" not in lower_result
+            and "error running" not in lower_result
+        ):
+
+            return result
+
+    return (
+        "WhatWeb could not retrieve usable results "
+        "from the target."
+    )
+
+
+# ============================================================
+# WHOIS
+# ============================================================
+
+def run_whois(domain):
+
+    whois_path = find_tool("whois")
+
+    if not whois_path:
+
+        return (
+            "WHOIS is not installed or "
+            "is not available in PATH."
+        )
+
+    return run_command(
+        [whois_path, domain],
+        timeout=30
+    )
+
+
+# ============================================================
+# NMAP
+# ============================================================
+
+def parse_nmap(output):
+    """
+    Parse Nmap XML output.
+
+    Preserves:
+    - Open ports
+    - Service names
+    - Product names
+    - Versions
+    - Extra version information
+    - CPE identifiers
+
+    XML is used internally for parsing and CVE matching.
+    It is not used as the report display output.
+    """
+
+    ports = []
+    services = []
+    versions = []
+
+    if not output:
+
+        return {
+            "count": 0,
+            "ports": [],
+            "services": [],
+            "versions": [],
+            "risk": "Info",
+            "reason": "No Nmap results were returned."
+        }
+
+    try:
+
+        root = ET.fromstring(output)
+
+        for port in root.findall(".//port"):
+
+            state = port.find("state")
+
+            if state is None or state.get("state") != "open":
+                continue
+
+            port_number = port.get("portid", "")
+
+            service_element = port.find("service")
+
+            service = "unknown"
+            version = ""
+            cpes = []
+
+            if service_element is not None:
+
+                service = service_element.get(
+                    "name",
+                    "unknown"
+                )
+
+                product = service_element.get("product", "")
+                version_number = service_element.get("version", "")
+                extra = service_element.get("extrainfo", "")
+
+                version = " ".join(
+                    part for part in [
+                        product,
+                        version_number,
+                        extra
+                    ]
+                    if part
+                )
+
+                for cpe_element in service_element.findall("cpe"):
+
+                    if cpe_element.text:
+
+                        cpes.append(
+                            cpe_element.text.strip()
+                        )
+
+            ports.append(port_number)
+            services.append(service)
+
+            versions.append({
+                "port": port_number,
+                "service": service,
+                "version": version,
+                "cpes": cpes
+            })
+
+    except ET.ParseError:
+
+        # Fallback for ordinary Nmap output.
+        # This does not provide reliable CPE information.
+
+        for line in output.splitlines():
+
+            if "/tcp" not in line or "open" not in line:
+                continue
+
+            parts = line.split()
+
+            if len(parts) < 2:
+                continue
+
+            port_number = parts[0].split("/")[0]
+
+            service = (
+                parts[2]
+                if len(parts) > 2
+                else "unknown"
+            )
+
+            version = (
+                " ".join(parts[3:])
+                if len(parts) > 3
+                else ""
+            )
+
+            ports.append(port_number)
+            services.append(service)
+
+            versions.append({
+                "port": port_number,
+                "service": service,
+                "version": version,
+                "cpes": []
+            })
+
+    risky_ports = {
+        "21", "23", "445", "1433", "3306",
+        "3389", "5432", "6379", "27017"
+    }
+
+    if any(port in risky_ports for port in ports):
+
+        risk = "High"
+        reason = "Potentially sensitive services are exposed."
+
+    elif ports:
+
+        risk = "Medium"
+        reason = "Open ports were detected."
+
+    else:
+
+        risk = "Low"
+        reason = "No open ports were detected by this scan."
+
+    return {
+        "count": len(ports),
+        "ports": ports,
+        "services": list(set(services)),
+        "versions": versions,
+        "risk": risk,
+        "reason": reason
+    }
+
+
+def run_nmap(domain, profile):
+    """
+    Run Nmap once and generate two output formats:
+
+    1. Normal output (-oN): readable output for reports.
+    2. XML output (-oX -): structured output for internal parsing.
+
+    The function returns a dictionary so that the XML and
+    normal output can be handled independently.
+
+    XML is never saved as the displayed Nmap report.
+    """
+
+    result_data = {
+        "xml": "",
+        "normal": "",
+        "error": "",
+        "returncode": None,
+        "skipped": False
+    }
+
+    nmap_path = find_tool("nmap")
+
+    if not nmap_path:
+
+        message = (
+            "Nmap is not installed or "
+            "is not available in PATH."
+        )
+
+        result_data["normal"] = message
+        result_data["error"] = message
+
+        return result_data
+
+    if profile == "safe":
+
+        result_data["normal"] = "Skipped (safe profile)."
+        result_data["skipped"] = True
+
+        return result_data
+
+    if profile == "normal":
+        port_range = "1-1000"
+
+    elif profile == "advanced":
+        port_range = "1-65535"
+
+    else:
+
+        message = "Invalid scan profile."
+
+        result_data["normal"] = message
+        result_data["error"] = message
+
+        return result_data
+
+    normal_output_path = None
+
+    try:
+
+        # Create a temporary file for normal Nmap output.
+        # Close it before Nmap writes to it (important on Windows).
+
+        file_descriptor, normal_output_path = tempfile.mkstemp(
+            prefix="webrecon_nmap_",
+            suffix=".txt"
+        )
+
+        os.close(file_descriptor)
+
+        command = [
+            nmap_path,
+            "-sV",
+            "-p",
+            port_range,
+            "--open",
+            "-oN",
+            normal_output_path,
+            "-oX",
+            "-",
+            domain
+        ]
+
+        launch_command = build_command(command)
+
+        process_result = subprocess.run(
+            launch_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+            timeout=NMAP_TIMEOUT,
+            shell=False,
+            env=os.environ.copy()
+        )
+
+        # XML is returned through standard output.
+        result_data["xml"] = process_result.stdout or ""
+
+        result_data["returncode"] = process_result.returncode
+
+        # Normal output is read from the temporary file.
+        if os.path.exists(normal_output_path):
+
+            with open(
+                normal_output_path,
+                "r",
+                encoding="utf-8",
+                errors="replace"
+            ) as file:
+
+                result_data["normal"] = file.read().strip()
+
+        stderr_output = (
+            process_result.stderr or ""
+        ).strip()
+
+        if stderr_output:
+
+            result_data["error"] = stderr_output
+
+            if result_data["normal"]:
+                result_data["normal"] += (
+                    "\n\nNmap messages:\n" + stderr_output
+                )
+            else:
+                result_data["normal"] = stderr_output
+
+        # Handle unsuccessful Nmap execution.
+
+        if process_result.returncode != 0:
+
+            message = (
+                f"Nmap exited with code "
+                f"{process_result.returncode}."
+            )
+
+            if result_data["error"]:
+                result_data["error"] = (
+                    message + "\n" + result_data["error"]
+                )
+            else:
+                result_data["error"] = message
+
+            if not result_data["normal"]:
+                result_data["normal"] = message
+
+        # Handle a scan that produced no normal output.
+
+        if not result_data["normal"]:
+
+            result_data["normal"] = (
+                "Nmap completed but did not produce normal output."
+            )
+
+        return result_data
+
+    except subprocess.TimeoutExpired as exc:
+
+        partial_xml = exc.stdout or ""
+
+        if isinstance(partial_xml, bytes):
+            partial_xml = partial_xml.decode(
+                "utf-8",
+                errors="replace"
+            )
+
+        result_data["xml"] = partial_xml
+
+        message = (
+            f"Nmap scan timed out after "
+            f"{NMAP_TIMEOUT} seconds."
+        )
+
+        result_data["error"] = message
+
+        if normal_output_path and os.path.exists(normal_output_path):
+
+            try:
+
+                with open(
+                    normal_output_path,
+                    "r",
+                    encoding="utf-8",
+                    errors="replace"
+                ) as file:
+
+                    result_data["normal"] = file.read().strip()
+
+            except OSError:
+                pass
+
+        if result_data["normal"]:
+            result_data["normal"] += "\n\n" + message
+        else:
+            result_data["normal"] = message
+
+        return result_data
+
+    except FileNotFoundError:
+
+        message = "Nmap executable could not be found."
+
+        result_data["normal"] = message
+        result_data["error"] = message
+
+        return result_data
+
+    except Exception as exc:
+
+        message = f"Error running Nmap: {exc}"
+
+        result_data["normal"] = message
+        result_data["error"] = message
+
+        return result_data
+
+    finally:
+
+        # Always remove the temporary normal-output file.
+
+        if normal_output_path and os.path.exists(normal_output_path):
+
+            try:
+                os.remove(normal_output_path)
+            except OSError:
+                pass
+
+
+# ============================================================
+# SUBDOMAIN ENUMERATION
+# ============================================================
+
+FALLBACK_SUBDOMAINS = [
+    "www", "mail", "ftp", "smtp", "pop", "imap",
+    "webmail", "remote", "vpn", "dev", "staging",
+    "test", "api", "portal", "admin", "beta",
+    "shop", "blog", "forum", "news", "static",
+    "cdn", "media", "images", "secure", "login",
+    "auth", "mobile", "app", "dashboard", "docs",
+    "support", "help", "status", "monitor", "git",
+    "gitlab", "jenkins", "jira", "confluence",
+    "wiki", "intranet", "server", "ns1", "ns2",
+    "mx", "mx1", "mx2", "autodiscover"
+]
+
+
+def socket_scan(domain):
+
+    def check(subdomain):
+
+        host = f"{subdomain}.{domain}"
+
+        try:
+
+            socket.getaddrinfo(
+                host,
+                None,
+                family=socket.AF_INET,
+                type=socket.SOCK_STREAM
+            )
+
+            return host
+
+        except socket.gaierror:
+            return None
+
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+
+        results = executor.map(
+            check,
+            FALLBACK_SUBDOMAINS
+        )
+
+    return sorted(
+        set(result for result in results if result)
+    )
+
+
+def gobuster_scan(domain, profile):
+
+    gobuster_path = find_tool("gobuster")
+
+    if not gobuster_path:
+        return []
+
+    wordlist = get_wordlist(profile)
+
+    if not wordlist:
+        return []
+
+    command = [
+        gobuster_path,
+        "dns",
+        "-d",
+        domain,
+        "-w",
+        wordlist,
+        "-t",
+        "30",
+        "--timeout",
+        "5s",
+        "-q",
+        "--no-color"
+    ]
+
+    output = run_command(
+        command,
+        timeout=GOBUSTER_TIMEOUT
+    )
+
+    if (
+        not output
+        or "error running" in output.lower()
+        or "timed out" in output.lower()
+        or "not installed" in output.lower()
+    ):
+        return []
+
+    found = []
+
+    for line in output.splitlines():
+
+        line = line.strip()
+
+        match = re.search(
+            r"(?:Found:\s*)?([a-zA-Z0-9.-]+\." +
+            re.escape(domain) + r")",
+            line,
+            re.IGNORECASE
+        )
+
+        if match:
+            found.append(match.group(1).lower())
+
+    return sorted(set(found))
+
+
+def get_subdomains(domain, profile):
+
+    results = []
+
+    if tool_installed("gobuster") and get_wordlist(profile):
+
+        results = gobuster_scan(domain, profile)
+
+    if not results:
+        results = socket_scan(domain)
+
+    return sorted(set(results))
+
+
+# ============================================================
+# CVE LOOKUP
+# ============================================================
 
 cve_cache = {}
 cve_lock = threading.Lock()
 
 
-def fetch_cves(service):
-    with cve_lock:
-        if service in cve_cache:
-            return cve_cache[service]
-    try:
-        res = requests.get(
-            "https://services.nvd.nist.gov/rest/json/cves/2.0",
-            params={"keywordSearch": service, "resultsPerPage": 3},
-            timeout=10
-        )
-        if res.status_code != 200:
-            return []
-        found, seen = [], set()
-        for item in res.json().get("vulnerabilities", []):
-            cve = item.get("cve", {})
-            cid = cve.get("id", "")
-            if cid in seen:
-                continue
-            seen.add(cid)
-            severity = score = "N/A"
-            for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
-                entries = cve.get("metrics", {}).get(key, [])
-                if entries:
-                    d = entries[0].get("cvssData", {})
-                    severity = d.get("baseSeverity", "N/A")
-                    score = d.get("baseScore", "N/A")
-                    break
-            desc = next(
-                (d["value"]
-                 for d in cve.get("descriptions", []) if d.get("lang") == "en"),
-                "No description."
+def legacy_cpe_to_23(cpe):
+    """
+    Convert a legacy Nmap CPE URI into CPE 2.3 format.
+    """
+
+    if not cpe:
+        return None
+
+    cpe = cpe.strip()
+
+    if cpe.startswith("cpe:2.3:"):
+        return cpe
+
+    if not cpe.startswith("cpe:/"):
+        return None
+
+    parts = cpe[5:].split(":")
+
+    if len(parts) < 3:
+        return None
+
+    while len(parts) < 11:
+        parts.append("*")
+
+    parts = parts[:11]
+
+    return "cpe:2.3:" + ":".join(parts)
+
+
+def extract_vulnerable_cpe_matches(node):
+    """
+    Recursively extract vulnerable CPE match entries
+    from an NVD CVE configuration structure.
+    """
+
+    matches = []
+
+    if isinstance(node, dict):
+
+        cpe_match = node.get("cpeMatch", [])
+
+        if isinstance(cpe_match, list):
+
+            for item in cpe_match:
+
+                if item.get("vulnerable") is True:
+                    matches.append(item)
+
+        for value in node.values():
+
+            if isinstance(value, (dict, list)):
+                matches.extend(
+                    extract_vulnerable_cpe_matches(value)
+                )
+
+    elif isinstance(node, list):
+
+        for item in node:
+
+            matches.extend(
+                extract_vulnerable_cpe_matches(item)
             )
+
+    return matches
+
+
+def fetch_cves_for_cpe(cpe23, service="unknown"):
+    """
+    Query NVD using a specific CPE.
+
+    Does not use generic keyword searches.
+    """
+
+    if not cpe23:
+        return []
+
+    with cve_lock:
+
+        if cpe23 in cve_cache:
+            return cve_cache[cpe23]
+
+    headers = {}
+
+    if NVD_API_KEY:
+        headers["apiKey"] = NVD_API_KEY
+
+    try:
+
+        response = requests.get(
+            NVD_API_URL,
+            params={
+                "cpeName": cpe23,
+                "resultsPerPage": 100
+            },
+            headers=headers,
+            timeout=25
+        )
+
+        if response.status_code != 200:
+            return []
+
+        vulnerabilities = response.json().get(
+            "vulnerabilities",
+            []
+        )
+
+        found = []
+
+        for item in vulnerabilities:
+
+            cve = item.get("cve", {})
+
+            cid = cve.get("id", "")
+
+            if not cid:
+                continue
+
+            vulnerable_matches = extract_vulnerable_cpe_matches(
+                cve.get("configurations", [])
+            )
+
+            if not vulnerable_matches:
+                continue
+
+            severity = "N/A"
+            score = "N/A"
+
+            metrics = cve.get("metrics", {})
+
+            for key in (
+                "cvssMetricV40",
+                "cvssMetricV31",
+                "cvssMetricV30",
+                "cvssMetricV2"
+            ):
+
+                entries = metrics.get(key, [])
+
+                if not entries:
+                    continue
+
+                data = entries[0].get("cvssData", {})
+
+                severity = data.get(
+                    "baseSeverity",
+                    severity
+                )
+
+                score = data.get(
+                    "baseScore",
+                    score
+                )
+
+                if severity == "N/A" and score != "N/A":
+
+                    try:
+                        numeric_score = float(score)
+
+                        if numeric_score >= 9:
+                            severity = "CRITICAL"
+                        elif numeric_score >= 7:
+                            severity = "HIGH"
+                        elif numeric_score >= 4:
+                            severity = "MEDIUM"
+                        else:
+                            severity = "LOW"
+
+                    except (TypeError, ValueError):
+                        pass
+
+                break
+
+            description = next(
+                (
+                    desc.get("value", "")
+                    for desc in cve.get("descriptions", [])
+                    if desc.get("lang") == "en"
+                ),
+                "No description available."
+            )
+
             found.append({
-                "id":       cid,
-                "service":  service,
+                "id": cid,
+                "service": service,
+                "cpe": cpe23,
                 "severity": severity,
-                "score":    score,
-                "desc":     desc[:300] + ("..." if len(desc) > 300 else ""),
-                "url":      f"https://nvd.nist.gov/vuln/detail/{cid}"
+                "score": score,
+                "desc": description[:300],
+                "url": (
+                    f"https://nvd.nist.gov/vuln/detail/{cid}"
+                )
             })
+
         with cve_lock:
-            cve_cache[service] = found
+            cve_cache[cpe23] = found
+
         return found
+
+    except requests.RequestException:
+        return []
+
+    except (ValueError, KeyError, TypeError):
+        return []
+
     except Exception:
         return []
 
 
-def get_cves(services):
-    result = []
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        for r in ex.map(fetch_cves, services[:5]):
-            result.extend(r)
-    return result
+def get_cves(versions):
+    """
+    Collect CVEs from detected software CPEs.
+    """
 
-
-# ── Subdomain enumeration ─────────────────────────────────────────────────────
-
-fallback_subs = [
-    "www", "mail", "ftp", "smtp", "pop", "imap", "webmail", "remote", "vpn", "dev",
-    "staging", "test", "api", "portal", "admin", "beta", "shop", "blog", "forum",
-    "news", "static", "cdn", "media", "images", "secure", "login", "auth", "m",
-    "mobile", "app", "dashboard", "docs", "support", "help", "status", "monitor",
-    "git", "gitlab", "jenkins", "jira", "confluence", "wiki", "intranet", "server",
-    "ns1", "ns2", "mx", "mx1", "mx2", "smtp1", "smtp2", "autodiscover"
-]
-
-wordlists = {
-    "safe":     "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt",
-    "normal":   "/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt",
-    "advanced": "/usr/share/seclists/Discovery/DNS/subdomains-top1million.txt"
-}
-
-
-def socket_scan(domain):
-    def check(sub):
-        host = f"{sub}.{domain}"
-        try:
-            socket.setdefaulttimeout(2)
-            socket.gethostbyname(host)
-            return host
-        except socket.error:
-            return None
-    with ThreadPoolExecutor(max_workers=20) as ex:
-        return [r for r in ex.map(check, fallback_subs) if r]
-
-
-def gobuster_scan(domain, profile):
-    wl = wordlists.get(profile, wordlists["safe"])
-    if not os.path.exists(wl):
-        wl = "/usr/share/wordlists/dirb/common.txt"
-    if not os.path.exists(wl):
+    if not versions:
         return []
-    out = shell(["gobuster", "dns", "-d", domain, "-w", wl,
-                 "-t", "50", "--timeout", "3s", "-q", "--no-color"])
-    found = []
-    for line in out.splitlines():
-        line = line.strip()
-        if line.startswith("Found:"):
-            found.append(line.replace("Found:", "").strip())
-        elif domain in line and not line.startswith("["):
-            found.append(line)
-    return found
+
+    targets = {}
+
+    for item in versions:
+
+        service = item.get("service", "unknown")
+
+        for raw_cpe in item.get("cpes", []):
+
+            cpe23 = legacy_cpe_to_23(raw_cpe)
+
+            if cpe23:
+                targets[cpe23] = service
+
+    if not targets:
+        return []
+
+    result = []
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+
+        futures = [
+            executor.submit(
+                fetch_cves_for_cpe,
+                cpe,
+                service
+            )
+            for cpe, service in targets.items()
+        ]
+
+        for future in futures:
+
+            try:
+                result.extend(future.result())
+            except Exception:
+                continue
+
+    unique = {}
+
+    for item in result:
+
+        key = item.get("id")
+
+        if key and key not in unique:
+            unique[key] = item
+
+    return list(unique.values())
 
 
-def get_subdomains(domain, profile):
-    if shutil.which("gobuster"):
-        r = gobuster_scan(domain, profile)
-        if r:
-            return r
-    return socket_scan(domain)
+# ============================================================
+# SECURITY INTELLIGENCE
+# ============================================================
 
-
-# ── Port knowledge base ───────────────────────────────────────────────────────
 PORT_INTEL = {
     "21": {
         "name": "FTP",
         "risk": "High",
-        "explanation": "FTP transmits data and credentials in plain text with no encryption. An attacker on the same network can intercept usernames, passwords, and all transferred files using a simple packet sniffer.",
-        "attack": "Man-in-the-Middle, Credential Sniffing, Brute Force, Anonymous Login",
-        "recommendation": "Disable FTP entirely and replace with SFTP (port 22) or FTPS. If FTP is required, restrict access by IP and enforce strong passwords.",
+        "explanation": "FTP may transmit credentials and data without encryption.",
+        "attack": "Credential sniffing, brute force, anonymous access",
+        "recommendation": "Disable FTP where possible and use SFTP or FTPS."
     },
     "22": {
         "name": "SSH",
         "risk": "Medium",
-        "explanation": "SSH provides encrypted remote access but an exposed SSH port is a constant target for automated brute-force attacks. Weak passwords or outdated SSH versions can lead to full server compromise.",
-        "attack": "Brute Force, Password Spraying, Exploits on outdated SSH versions",
-        "recommendation": "Disable password authentication and use SSH key pairs only. Change the default port, restrict access with firewall rules, and keep SSH updated.",
+        "explanation": "Exposed SSH services may be targeted by automated login attacks.",
+        "attack": "Brute force, password spraying",
+        "recommendation": "Use SSH keys, disable password login where practical, and restrict access."
     },
     "23": {
         "name": "Telnet",
         "risk": "Critical",
-        "explanation": "Telnet sends everything including usernames, passwords, and commands in completely plain text. It has no encryption whatsoever. Any attacker who can observe network traffic will see everything.",
-        "attack": "Credential Sniffing, Man-in-the-Middle, Session Hijacking",
-        "recommendation": "Disable Telnet immediately. It should never be exposed on any modern system. Replace with SSH.",
+        "explanation": "Telnet transmits credentials and commands without encryption.",
+        "attack": "Credential interception, session hijacking",
+        "recommendation": "Disable Telnet and use SSH."
     },
     "25": {
         "name": "SMTP",
         "risk": "Medium",
-        "explanation": "An open SMTP port can be abused as an open mail relay, allowing attackers to send spam or phishing emails through your server and getting your IP blacklisted.",
-        "attack": "Open Relay Abuse, Spam Campaigns, Email Spoofing",
-        "recommendation": "Restrict SMTP to authenticated users only. Disable relaying for unauthenticated connections. Implement SPF, DKIM, and DMARC DNS records.",
+        "explanation": "An improperly configured SMTP server may be abused for spam or email spoofing.",
+        "attack": "Open relay abuse, phishing",
+        "recommendation": "Restrict relaying and configure SPF, DKIM and DMARC."
     },
     "80": {
         "name": "HTTP",
         "risk": "Low",
-        "explanation": "Unencrypted HTTP traffic can be intercepted. Users accessing your site over HTTP have their session cookies and form submissions exposed to anyone watching the network.",
-        "attack": "Man-in-the-Middle, Session Hijacking, Content Injection",
-        "recommendation": "Redirect all HTTP traffic to HTTPS. Implement HSTS to prevent protocol downgrade attacks.",
+        "explanation": "HTTP traffic is not encrypted.",
+        "attack": "Traffic interception, content injection",
+        "recommendation": "Redirect HTTP traffic to HTTPS."
     },
     "443": {
         "name": "HTTPS",
         "risk": "Info",
-        "explanation": "HTTPS is the expected encrypted web port. The main risks are misconfigured TLS settings or support for outdated TLS versions.",
-        "attack": "SSL Stripping, Weak Cipher Exploitation",
-        "recommendation": "Ensure TLS 1.2 or 1.3 only. Disable SSLv3 and TLS 1.0/1.1. Use strong cipher suites.",
+        "explanation": "HTTPS is expected for public websites. TLS configuration should still be reviewed.",
+        "attack": "Weak TLS configuration",
+        "recommendation": "Use modern TLS versions and secure cipher suites."
     },
     "445": {
         "name": "SMB",
         "risk": "Critical",
-        "explanation": "SMB exposed to the internet is extremely dangerous. It was the entry point for WannaCry and NotPetya ransomware attacks. Unauthenticated attackers can potentially execute code remotely.",
-        "attack": "EternalBlue Exploit, WannaCry Ransomware, Remote Code Execution, Credential Theft",
-        "recommendation": "Block port 445 at the firewall immediately. SMB should never be exposed to the public internet. Use a VPN for remote file access.",
+        "explanation": "Publicly exposed SMB services can expose file-sharing infrastructure.",
+        "attack": "Remote exploitation, credential theft",
+        "recommendation": "Block public SMB access."
     },
     "1433": {
         "name": "MSSQL",
         "risk": "Critical",
-        "explanation": "Microsoft SQL Server directly exposed to the internet is a critical risk. Attackers scan for this port continuously. A successful breach gives complete database access.",
-        "attack": "SQL Injection, Brute Force, SA Account Exploitation, xp_cmdshell Abuse",
-        "recommendation": "Block port 1433 at the firewall. Database servers should never be publicly accessible.",
+        "explanation": "Direct database exposure increases the risk of unauthorised access.",
+        "attack": "Brute force, data theft",
+        "recommendation": "Restrict database access to trusted networks."
     },
     "3306": {
         "name": "MySQL",
         "risk": "Critical",
-        "explanation": "MySQL exposed to the internet gives attackers direct access to attempt database login. A successful breach exposes all data and potentially allows command execution.",
-        "attack": "Brute Force, SQL Injection, Data Exfiltration, Load_file/Into Outfile Abuse",
-        "recommendation": "Block MySQL from public access entirely. Bind MySQL to 127.0.0.1 in my.cnf.",
+        "explanation": "Public database access can expose sensitive records.",
+        "attack": "Brute force, data exfiltration",
+        "recommendation": "Restrict MySQL to trusted interfaces."
     },
     "3389": {
         "name": "RDP",
         "risk": "Critical",
-        "explanation": "Remote Desktop Protocol exposed to the internet has a long history of critical vulnerabilities including BlueKeep and DejaBlue which allow unauthenticated remote code execution.",
-        "attack": "BlueKeep RCE, Brute Force, Pass-the-Hash, Ransomware Delivery",
-        "recommendation": "Block RDP from the public internet immediately. Place RDP behind a VPN. Enable Network Level Authentication.",
+        "explanation": "Exposed Remote Desktop services are common targets for attackers.",
+        "attack": "Brute force, remote exploitation",
+        "recommendation": "Place RDP behind a VPN and enforce strong authentication."
     },
     "5432": {
         "name": "PostgreSQL",
         "risk": "Critical",
-        "explanation": "PostgreSQL exposed to the internet allows attackers to attempt direct database authentication. Successful access exposes all stored data.",
-        "attack": "Brute Force, Data Exfiltration, File System Access via COPY command",
-        "recommendation": "Block PostgreSQL from public internet access. Bind to internal interfaces only.",
+        "explanation": "Public database access can expose stored information.",
+        "attack": "Brute force, data theft",
+        "recommendation": "Restrict PostgreSQL to trusted networks."
     },
     "6379": {
         "name": "Redis",
         "risk": "Critical",
-        "explanation": "Redis has no authentication by default. Attackers can read all cached data and in some configurations achieve remote code execution by writing to cron or SSH authorized_keys.",
-        "attack": "Unauthenticated Access, Data Theft, Remote Code Execution via cron injection",
-        "recommendation": "Add requirepass authentication. Bind to 127.0.0.1. Block port 6379 at the firewall.",
+        "explanation": "An exposed Redis instance may allow unauthorised access to cached data.",
+        "attack": "Unauthorised access, data theft",
+        "recommendation": "Require authentication and restrict network access."
     },
     "8080": {
         "name": "HTTP Alternate",
         "risk": "Medium",
-        "explanation": "Alternative HTTP port often used for development servers or admin panels that are frequently misconfigured or left with default credentials.",
-        "attack": "Default Credentials, Unpatched Admin Panels, Proxy Abuse",
-        "recommendation": "Determine what service is running. If a development server, block public access. Enforce strong authentication.",
+        "explanation": "Alternative HTTP ports may expose development or administrative services.",
+        "attack": "Default credentials, information disclosure",
+        "recommendation": "Identify the service and restrict access where necessary."
     },
     "27017": {
         "name": "MongoDB",
         "risk": "Critical",
-        "explanation": "MongoDB with no authentication exposed to the internet has led to thousands of data breaches. Attackers continuously scan for open MongoDB instances and can access all data without credentials.",
-        "attack": "Unauthenticated Access, Data Exfiltration, Database Deletion",
-        "recommendation": "Enable MongoDB authentication. Bind to internal IPs only. Block port 27017 at the firewall.",
-    },
+        "explanation": "An exposed MongoDB service may allow unauthorised database access.",
+        "attack": "Data theft, unauthorised database access",
+        "recommendation": "Enable authentication and restrict network access."
+    }
 }
 
-# ── Technology knowledge base ─────────────────────────────────────────────────
 
 TECH_INTEL = {
-    "wordpress": {
-        "risk": "Medium",
-        "explanation": "WordPress is the most targeted CMS on the internet. Outdated WordPress core, themes, or plugins are the most common website compromise vector.",
-        "recommendation": "Keep WordPress core, themes, and plugins updated. Use a security plugin like Wordfence. Hide the WordPress version number. Restrict wp-admin by IP.",
-    },
-    "drupal": {
-        "risk": "Medium",
-        "explanation": "Drupal has had critical remote code execution vulnerabilities (Drupalgeddon). An outdated Drupal installation can be compromised automatically by scanners.",
-        "recommendation": "Keep Drupal and all modules updated. Subscribe to Drupal security advisories.",
-    },
-    "joomla": {
-        "risk": "Medium",
-        "explanation": "Joomla has a history of critical vulnerabilities. Outdated installations and vulnerable extensions are commonly exploited for defacement and data theft.",
-        "recommendation": "Update Joomla core and all extensions. Disable unused extensions. Restrict admin panel access by IP.",
-    },
-    "apache": {
-        "risk": "Low",
-        "explanation": "The Apache version disclosed in headers allows attackers to look up known vulnerabilities for that exact version. Outdated Apache versions have critical unpatched CVEs.",
-        "recommendation": "Update Apache. Set 'ServerTokens Prod' and 'ServerSignature Off' in httpd.conf to hide version information.",
-    },
-    "nginx": {
-        "risk": "Low",
-        "explanation": "Nginx version disclosure in headers allows targeted version-specific attacks.",
-        "recommendation": "Set 'server_tokens off' in nginx.conf to hide version. Keep Nginx updated.",
-    },
-    "iis": {
-        "risk": "Low",
-        "explanation": "IIS version disclosure exposes the exact Windows Server version, helping attackers narrow their attack to known Windows-specific exploits.",
-        "recommendation": "Hide IIS version via custom headers. Keep IIS and Windows Server fully patched.",
-    },
-    "php": {
-        "risk": "Medium",
-        "explanation": "PHP version exposed in headers reveals the exact runtime version. PHP versions below 8.1 are end-of-life and receive no security updates.",
-        "recommendation": "Update to PHP 8.2 or later. Set 'expose_php = Off' in php.ini to hide the version.",
-    },
-    "jquery": {
-        "risk": "Low",
-        "explanation": "Outdated jQuery versions have known XSS and prototype pollution vulnerabilities. jQuery below 3.5 is particularly affected.",
-        "recommendation": "Update jQuery to the latest version (3.7+).",
-    },
-    "bootstrap": {
-        "risk": "Info",
-        "explanation": "Outdated Bootstrap versions may have XSS vulnerabilities in certain JavaScript components.",
-        "recommendation": "Update Bootstrap to the latest version.",
-    },
-    "x-powered-by": {
-        "risk": "Low",
-        "explanation": "The X-Powered-By header reveals the server technology stack (e.g. PHP/7.4, ASP.NET). This helps attackers identify the exact software and look up known exploits.",
-        "recommendation": "Remove the X-Powered-By header. In PHP: set 'expose_php = Off'. In Express.js: app.disable('x-powered-by').",
-    },
-    "x-aspnet-version": {
-        "risk": "Low",
-        "explanation": "The X-AspNet-Version header reveals the exact .NET runtime version, helping attackers identify version-specific vulnerabilities.",
-        "recommendation": "Remove the header by adding '<remove name=\"X-AspNet-Version\"/>' in Web.config under system.webServer/httpProtocol/customHeaders.",
-    },
-    "httpserver": {
-        "risk": "Low",
-        "explanation": "The Server header reveals the web server type and version. This is unnecessary information that helps attackers identify vulnerable software.",
-        "recommendation": "Configure your web server to suppress or generalise the Server response header.",
-    },
+    "wordpress": (
+        "Medium",
+        "WordPress installations should be kept updated.",
+        "Update WordPress, themes and plugins."
+    ),
+    "drupal": (
+        "Medium",
+        "Outdated Drupal installations may contain known vulnerabilities.",
+        "Update Drupal core and modules."
+    ),
+    "joomla": (
+        "Medium",
+        "Outdated Joomla installations may contain known vulnerabilities.",
+        "Update Joomla and its extensions."
+    ),
+    "apache": (
+        "Low",
+        "Server version disclosure can help attackers identify software versions.",
+        "Keep Apache updated and minimise version disclosure."
+    ),
+    "nginx": (
+        "Low",
+        "Server version disclosure can assist targeted reconnaissance.",
+        "Keep Nginx updated and minimise version disclosure."
+    ),
+    "iis": (
+        "Low",
+        "IIS version disclosure may reveal server information.",
+        "Keep IIS updated and review exposed headers."
+    ),
+    "php": (
+        "Medium",
+        "Outdated PHP versions may contain known security vulnerabilities.",
+        "Use a supported PHP version."
+    ),
+    "jquery": (
+        "Low",
+        "Outdated jQuery versions may contain known vulnerabilities.",
+        "Update jQuery to a supported release."
+    ),
+    "bootstrap": (
+        "Info",
+        "Bootstrap version information was detected.",
+        "Review the version and update when necessary."
+    ),
+    "httpserver": (
+        "Low",
+        "The Server header may reveal server software information.",
+        "Review and minimise server version disclosure."
+    )
 }
 
-# ── Missing security headers ──────────────────────────────────────────────────
 
 HEADER_INTEL = {
     "content-security-policy": {
-        "explanation": "No Content-Security-Policy header was detected. CSP prevents Cross-Site Scripting (XSS) attacks by specifying which sources of scripts, styles, and other resources the browser should trust.",
-        "attack": "Cross-Site Scripting (XSS), Code Injection",
-        "recommendation": "Add the header to your server config. Start with: Content-Security-Policy: default-src 'self'",
+        "explanation": "No Content-Security-Policy header was detected.",
+        "attack": "May increase exposure to certain cross-site scripting attacks.",
+        "recommendation": "Define a suitable Content-Security-Policy for your application."
     },
     "x-frame-options": {
-        "explanation": "No X-Frame-Options header was detected. Without this, attackers can embed your site in a hidden iframe on a malicious page and trick users into clicking on your site's buttons (Clickjacking).",
-        "attack": "Clickjacking, UI Redressing",
-        "recommendation": "Add header: X-Frame-Options: DENY  (or SAMEORIGIN if you need to embed your own pages)",
+        "explanation": "No X-Frame-Options header was detected.",
+        "attack": "Clickjacking may be possible if framing is not otherwise restricted.",
+        "recommendation": "Use X-Frame-Options: DENY or SAMEORIGIN, or an appropriate CSP frame-ancestors policy."
     },
     "x-content-type-options": {
-        "explanation": "No X-Content-Type-Options header was detected. Without this, browsers may guess (sniff) the content type of responses, which can allow XSS attacks via uploaded files.",
-        "attack": "MIME Sniffing, XSS via file upload",
-        "recommendation": "Add header: X-Content-Type-Options: nosniff",
+        "explanation": "No X-Content-Type-Options header was detected.",
+        "attack": "MIME type sniffing may create additional risk.",
+        "recommendation": "Add X-Content-Type-Options: nosniff."
     },
     "strict-transport-security": {
-        "explanation": "No HSTS (HTTP Strict Transport Security) header was detected. Without this, attackers can force your users' browsers to use HTTP instead of HTTPS and intercept all traffic (SSL Stripping).",
-        "attack": "SSL Stripping, Protocol Downgrade Attack, Man-in-the-Middle",
-        "recommendation": "Add header: Strict-Transport-Security: max-age=31536000; includeSubDomains; preload",
+        "explanation": "No HSTS header was detected.",
+        "attack": "Users may be more exposed to protocol downgrade attacks.",
+        "recommendation": "Configure Strict-Transport-Security after confirming HTTPS works correctly."
     },
     "referrer-policy": {
-        "explanation": "No Referrer-Policy header was detected. By default, browsers send the full page URL as a referrer when a user clicks a link, which can leak sensitive URL parameters such as session tokens to third-party sites.",
-        "attack": "Information Disclosure, Session Token Leakage",
-        "recommendation": "Add header: Referrer-Policy: strict-origin-when-cross-origin",
+        "explanation": "No Referrer-Policy header was detected.",
+        "attack": "Referrer information may disclose more URL data than intended.",
+        "recommendation": "Consider strict-origin-when-cross-origin."
     },
     "permissions-policy": {
-        "explanation": "No Permissions-Policy header was detected. This header lets you control which browser features (camera, microphone, geolocation) third-party scripts embedded in your page are allowed to use.",
-        "attack": "Feature Abuse, Privacy Violation via embedded scripts",
-        "recommendation": "Add header: Permissions-Policy: camera=(), microphone=(), geolocation=()",
-    },
+        "explanation": "No Permissions-Policy header was detected.",
+        "attack": "Browser features may not be explicitly restricted.",
+        "recommendation": "Restrict browser features that your application does not need."
+    }
 }
 
 
-# ── Analysis modules ──────────────────────────────────────────────────────────
+# ============================================================
+# PORT ANALYSIS
+# ============================================================
 
 def analyse_ports(nmap_result):
+
     findings = []
-    for v in nmap_result.get("versions", []):
-        port = v["port"]
-        svc = v["service"]
-        ver = v["version"]
+
+    for item in nmap_result.get("versions", []):
+
+        port = item["port"]
+        service = item["service"]
+        version = item["version"]
+
         intel = PORT_INTEL.get(port)
-        if not intel:
-            findings.append({
-                "source":         "Nmap",
-                "type":           "open_port",
-                "title":          f"Port {port} Open ({svc})",
-                "risk":           "Low",
-                "explanation":    f"Port {port} is open running {svc}. Every unnecessary open port increases your attack surface and gives attackers another potential entry point.",
-                "attack":         "Service Exploitation, Information Disclosure",
-                "recommendation": f"If {svc} on port {port} is not needed, close it in your firewall. Verify this service is intentional and kept updated.",
-                "version":        ver,
-            })
-        else:
+
+        if intel:
+
             explanation = intel["explanation"]
-            if ver:
-                explanation += f" Detected version: {ver}."
+
+            if version:
+                explanation += f" Detected version: {version}."
+
             findings.append({
-                "source":         "Nmap",
-                "type":           "open_port",
-                "title":          f"Port {port} Open — {intel['name']}",
-                "risk":           intel["risk"],
-                "explanation":    explanation,
-                "attack":         intel.get("attack", ""),
+                "source": "Nmap",
+                "type": "open_port",
+                "title": f"Port {port} Open — {intel['name']}",
+                "risk": intel["risk"],
+                "explanation": explanation,
+                "attack": intel["attack"],
                 "recommendation": intel["recommendation"],
-                "version":        ver,
-            })
-    return findings
-
-
-def analyse_whatweb(whatweb_output):
-    """
-    Parse WhatWeb -v output properly.
-    Plugin names appear as [ PluginName ] in the output.
-    We extract all plugin names and match them against our knowledge base.
-    We also check the raw text for header strings.
-    """
-    findings = []
-    text_lower = whatweb_output.lower()
-
-    # Extract all plugin names from [ PluginName ] patterns
-    plugin_names = set(
-        m.lower().strip()
-        for m in re.findall(r'\[\s*([A-Za-z0-9_\-\.]+)\s*\]', whatweb_output)
-    )
-
-    # Also check the Summary line for comma-separated items
-    summary_match = re.search(r'Summary\s*:\s*(.+)', whatweb_output)
-    if summary_match:
-        for item in summary_match.group(1).split(","):
-            plugin_names.add(item.strip().lower().split("[")[0].strip())
-
-    # Match against technology knowledge base
-    already_reported = set()
-    for tech, intel in TECH_INTEL.items():
-        matched = tech in plugin_names
-        if not matched:
-            matched = tech in text_lower
-        if matched and tech not in already_reported:
-            already_reported.add(tech)
-            label = tech.upper() if len(tech) <= 4 else tech.replace("-", " ").title()
-            findings.append({
-                "source":         "WhatWeb",
-                "type":           "technology",
-                "title":          f"Detected: {label}",
-                "risk":           intel["risk"],
-                "explanation":    intel["explanation"],
-                "recommendation": intel["recommendation"],
+                "version": version
             })
 
-    # Check for missing security headers
-    for header, intel in HEADER_INTEL.items():
-        header_variants = [
-            header,
-            header.replace("-", ""),
-            header.replace("-", " "),
-        ]
-        present = any(
-            v in plugin_names or v in text_lower for v in header_variants)
-        if not present:
+        else:
+
             findings.append({
-                "source":         "Headers",
-                "type":           "missing_header",
-                "title":          f"Missing Security Header: {header.title()}",
-                "risk":           "Medium",
-                "explanation":    intel["explanation"],
-                "attack":         intel["attack"],
-                "recommendation": intel["recommendation"],
+                "source": "Nmap",
+                "type": "open_port",
+                "title": f"Port {port} Open ({service})",
+                "risk": "Low",
+                "explanation": f"Port {port} is open and running {service}.",
+                "attack": "Service exploitation, information disclosure",
+                "recommendation": "Confirm that the service is required and properly secured.",
+                "version": version
             })
 
     return findings
 
 
-def analyse_whois(whois_output, domain):
-    findings = []
-    text = whois_output.lower()
+# ============================================================
+# WHATWEB ANALYSIS
+# ============================================================
 
-    expiry_patterns = [
-        r"expir(?:y|ation|es)[^\n:]*:\s*([^\n]+)",
-        r"paid-till:\s*([^\n]+)",
-        r"registry expiry date:\s*([^\n]+)",
-        r"registrar registration expiration date:\s*([^\n]+)",
+def analyse_whatweb(output):
+
+    findings = []
+
+    if not output:
+        return findings
+
+    lower_output = output.lower()
+
+    if any(
+        message in lower_output
+        for message in (
+            "not installed",
+            "could not be found",
+            "could not retrieve usable results"
+        )
+    ):
+        return findings
+
+    for technology, intel in TECH_INTEL.items():
+
+        if technology not in lower_output:
+            continue
+
+        risk, explanation, recommendation = intel
+
+        findings.append({
+            "source": "WhatWeb",
+            "type": "technology",
+            "title": f"Detected: {technology.replace('-', ' ').title()}",
+            "risk": risk,
+            "explanation": explanation,
+            "recommendation": recommendation
+        })
+
+    return findings
+
+
+# ============================================================
+# HTTP SECURITY HEADER ANALYSIS
+# ============================================================
+
+def analyse_http_headers(domain):
+    """
+    Retrieve real HTTP response headers.
+
+    HTTPS is attempted first. HTTP is attempted only if HTTPS
+    cannot be reached.
+
+    HSTS is assessed only when the final response uses HTTPS.
+    """
+
+    findings = []
+
+    response = None
+
+    urls = [
+        f"https://{domain}",
+        f"http://{domain}"
     ]
-    expiry_str = None
-    for pat in expiry_patterns:
-        m = re.search(pat, text)
-        if m:
-            expiry_str = m.group(1).strip()
+
+    for url in urls:
+
+        try:
+
+            response = requests.get(
+                url,
+                timeout=HTTP_TIMEOUT,
+                allow_redirects=True,
+                headers={
+                    "User-Agent": "WebRecon-Security-Scanner/1.0"
+                }
+            )
+
             break
 
-    if expiry_str:
+        except requests.RequestException:
+            continue
+
+    if response is None:
+        return findings
+
+    headers = {
+        key.lower(): value
+        for key, value in response.headers.items()
+    }
+
+    is_https = response.url.lower().startswith("https://")
+
+    for header, intel in HEADER_INTEL.items():
+
+        if header == "strict-transport-security" and not is_https:
+            continue
+
+        if header not in headers:
+
+            findings.append({
+                "source": "Headers",
+                "type": "missing_header",
+                "title": (
+                    f"Missing Security Header: "
+                    f"{header.title()}"
+                ),
+                "risk": "Medium",
+                "explanation": intel["explanation"],
+                "attack": intel["attack"],
+                "recommendation": intel["recommendation"]
+            })
+
+    for header in ("x-powered-by", "x-aspnet-version"):
+
+        if header in headers:
+
+            findings.append({
+                "source": "Headers",
+                "type": "information_disclosure",
+                "title": f"Technology Disclosure: {header.title()}",
+                "risk": "Low",
+                "explanation": (
+                    f"The response exposes the {header} header."
+                ),
+                "attack": "Technology fingerprinting",
+                "recommendation": (
+                    "Remove unnecessary technology and version disclosure headers."
+                )
+            })
+
+    return findings
+
+
+# ============================================================
+# WHOIS ANALYSIS
+# ============================================================
+
+def analyse_whois(output, domain):
+
+    findings = []
+
+    if not output:
+        return findings
+
+    lower_output = output.lower()
+
+    if (
+        "not installed" in lower_output
+        or "could not be found" in lower_output
+    ):
+        return findings
+
+    expiry_patterns = [
+        r"registry expiry date:\s*([^\n]+)",
+        r"registrar registration expiration date:\s*([^\n]+)",
+        r"expiration date:\s*([^\n]+)",
+        r"expiry date:\s*([^\n]+)",
+        r"paid-till:\s*([^\n]+)"
+    ]
+
+    expiry_value = None
+
+    for pattern in expiry_patterns:
+
+        match = re.search(
+            pattern,
+            output,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            expiry_value = match.group(1).strip()
+            break
+
+    if expiry_value:
+
         try:
+
             from dateutil import parser as dateparser
-            expiry_date = dateparser.parse(expiry_str, ignoretz=True)
-            days_left = (expiry_date - datetime.utcnow()).days
+
+            expiry_date = dateparser.parse(
+                expiry_value,
+                ignoretz=True
+            )
+
+            days_left = (
+                expiry_date - datetime.utcnow()
+            ).days
 
             if days_left < 0:
-                findings.append({
-                    "source":         "WHOIS",
-                    "type":           "domain_expiry",
-                    "title":          "CRITICAL: Domain Has Expired",
-                    "risk":           "Critical",
-                    "explanation":    f"The domain {domain} expired {abs(days_left)} days ago. An expired domain can be registered by anyone — including attackers — who can then host malicious content, intercept emails, or impersonate your organisation.",
-                    "attack":         "Domain Hijacking, Phishing, Email Interception",
-                    "recommendation": "Renew the domain immediately through your registrar. Check if it has already been taken over.",
-                    "expiry_date":    str(expiry_date.date()),
-                    "days_left":      days_left,
-                })
+
+                risk = "Critical"
+                title = "Domain Expired"
+                recommendation = (
+                    "Check the registrar and renew the domain immediately."
+                )
+
             elif days_left <= 7:
-                findings.append({
-                    "source":         "WHOIS",
-                    "type":           "domain_expiry",
-                    "title":          f"URGENT: Domain Expires in {days_left} Days",
-                    "risk":           "Critical",
-                    "explanation":    f"Your domain expires in {days_left} days. If it lapses even briefly, an attacker can register it and impersonate your organisation, host phishing pages, or intercept all emails sent to your domain.",
-                    "attack":         "Domain Hijacking, Phishing, Email Interception",
-                    "recommendation": "Renew the domain today. Enable auto-renew at your registrar. Set up expiry alerts.",
-                    "expiry_date":    str(expiry_date.date()),
-                    "days_left":      days_left,
-                })
+
+                risk = "Critical"
+                title = f"Domain Expires in {days_left} Days"
+                recommendation = "Renew the domain immediately."
+
             elif days_left <= 30:
-                findings.append({
-                    "source":         "WHOIS",
-                    "type":           "domain_expiry",
-                    "title":          f"Warning: Domain Expires in {days_left} Days",
-                    "risk":           "High",
-                    "explanation":    f"Your domain expires in {days_left} days. Domains that lapse can be hijacked by attackers.",
-                    "attack":         "Domain Hijacking",
-                    "recommendation": "Renew the domain soon and enable auto-renew at your registrar.",
-                    "expiry_date":    str(expiry_date.date()),
-                    "days_left":      days_left,
-                })
+
+                risk = "High"
+                title = f"Domain Expires in {days_left} Days"
+                recommendation = "Renew the domain soon."
+
             elif days_left <= 90:
-                findings.append({
-                    "source":         "WHOIS",
-                    "type":           "domain_expiry",
-                    "title":          f"Notice: Domain Expires in {days_left} Days",
-                    "risk":           "Low",
-                    "explanation":    f"Your domain expires in {days_left} days (on {expiry_date.date()}). No immediate risk but worth noting.",
-                    "recommendation": "Consider renewing soon and enabling auto-renew.",
-                    "expiry_date":    str(expiry_date.date()),
-                    "days_left":      days_left,
-                })
+
+                risk = "Low"
+                title = f"Domain Expires in {days_left} Days"
+                recommendation = (
+                    "Plan the renewal and check auto-renewal settings."
+                )
+
             else:
-                findings.append({
-                    "source":         "WHOIS",
-                    "type":           "domain_expiry",
-                    "title":          f"Domain Valid — Expires in {days_left} Days",
-                    "risk":           "Info",
-                    "explanation":    f"Domain is registered and valid until {expiry_date.date()}. No action required.",
-                    "recommendation": "Ensure auto-renew is enabled at your registrar.",
-                    "expiry_date":    str(expiry_date.date()),
-                    "days_left":      days_left,
-                })
+
+                risk = "Info"
+                title = (
+                    f"Domain Valid — {days_left} Days Remaining"
+                )
+                recommendation = (
+                    "Ensure domain auto-renewal is enabled."
+                )
+
+            findings.append({
+                "source": "WHOIS",
+                "type": "domain_expiry",
+                "title": title,
+                "risk": risk,
+                "explanation": (
+                    f"{domain} has a reported expiry date "
+                    f"of {expiry_date.date()}."
+                ),
+                "recommendation": recommendation,
+                "expiry_date": str(expiry_date.date()),
+                "days_left": days_left
+            })
+
         except Exception:
             pass
 
-    if "redacted for privacy" in text or "gdpr" in text or "data protected" in text:
+    privacy_phrases = [
+        "redacted for privacy",
+        "data redacted",
+        "data protected",
+        "privacy service",
+        "whois privacy",
+        "registration private",
+        "not disclosed",
+        "masked for privacy"
+    ]
+
+    privacy_enabled = any(
+        phrase in lower_output
+        for phrase in privacy_phrases
+    )
+
+    if privacy_enabled:
+
         findings.append({
-            "source":         "WHOIS",
-            "type":           "whois_privacy",
-            "title":          "WHOIS Privacy Enabled",
-            "risk":           "Info",
-            "explanation":    "Registrant contact details are hidden. This is good practice as it prevents personal information from being harvested.",
-            "recommendation": "Good — keep WHOIS privacy enabled.",
+            "source": "WHOIS",
+            "type": "whois_privacy",
+            "title": "WHOIS Privacy Enabled",
+            "risk": "Info",
+            "explanation": (
+                "Registrant information appears to be protected "
+                "or redacted."
+            ),
+            "recommendation": (
+                "Continue using appropriate domain registration privacy protection."
+            )
         })
+
     else:
-        if re.search(r"\b[a-z._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b", text):
-            findings.append({
-                "source":         "WHOIS",
-                "type":           "whois_exposure",
-                "title":          "Registrant Email Exposed in WHOIS",
-                "risk":           "Low",
-                "explanation":    "Your registrant email is publicly visible in WHOIS. This email can be harvested for phishing and social engineering attacks targeting your domain administrator.",
-                "attack":         "Phishing, Social Engineering, Spam",
-                "recommendation": "Enable WHOIS privacy protection at your registrar to hide personal contact details.",
-            })
 
-    ns_count = len(re.findall(r"name server:", text))
-    if 0 < ns_count < 2:
-        findings.append({
-            "source":         "WHOIS",
-            "type":           "dns_resilience",
-            "title":          "Single Nameserver Configured",
-            "risk":           "Medium",
-            "explanation":    "Only one nameserver is configured. If it goes down, your entire domain becomes unreachable. DNS standards recommend at least two nameservers in different locations.",
-            "attack":         "Single Point of Failure, DNS Outage",
-            "recommendation": "Add a secondary nameserver at a different hosting provider for redundancy.",
-        })
+        registrant_email = re.search(
+            r"(?im)^\s*(?:registrant|owner)\s+"
+            r"(?:e-?mail|email address)\s*:\s*([^\s]+)",
+            output
+        )
+
+        if registrant_email:
+
+            email_value = registrant_email.group(1).strip()
+
+            excluded_values = (
+                "redacted",
+                "privacy",
+                "protected",
+                "not disclosed",
+                "data unavailable"
+            )
+
+            if not any(
+                value in email_value.lower()
+                for value in excluded_values
+            ):
+
+                findings.append({
+                    "source": "WHOIS",
+                    "type": "whois_exposure",
+                    "title": "Registrant Email May Be Exposed",
+                    "risk": "Low",
+                    "explanation": (
+                        "An email address was found in the "
+                        "registrant contact field."
+                    ),
+                    "attack": "Phishing, spam and social engineering",
+                    "recommendation": (
+                        "Review whether the registrant contact "
+                        "information should be publicly visible."
+                    )
+                })
 
     return findings
 
 
-def analyse_dns(dns_output, domain):
+# ============================================================
+# DNS ANALYSIS
+# ============================================================
+
+def analyse_dns(output, domain):
+
     findings = []
-    text = dns_output.lower()
 
-    if "wildcard" in text or "* " in dns_output:
+    if not output:
+        return findings
+
+    text = output.lower()
+
+    if "wildcard" in text:
+
         findings.append({
-            "source":         "DNS",
-            "type":           "misconfiguration",
-            "title":          "Wildcard DNS Record Detected",
-            "risk":           "Medium",
-            "explanation":    "A wildcard DNS record (*) resolves all subdomains to the same IP. This means any subdomain — including ones you never created — will point to your server. Attackers can craft convincing phishing URLs using your domain name.",
-            "attack":         "Phishing via crafted subdomains, Subdomain Takeover",
-            "recommendation": "Remove wildcard DNS records unless explicitly required. Use specific subdomain records instead.",
+            "source": "DNS",
+            "type": "misconfiguration",
+            "title": "Wildcard DNS Record Detected",
+            "risk": "Medium",
+            "explanation": (
+                "Wildcard DNS information was detected in the DNS output."
+            ),
+            "attack": "Phishing using misleading subdomains",
+            "recommendation": (
+                "Review whether wildcard DNS records are required."
+            )
         })
 
-    try:
-        axfr = shell(["dig", "AXFR", domain, f"@{domain}"])
-        if ("Transfer failed" not in axfr
-                and "connection timed out" not in axfr
-                and len(axfr.strip()) > 100):
+    if tool_installed("dig"):
+
+        dig_path = find_tool("dig")
+
+        axfr = run_command(
+            [
+                dig_path,
+                "AXFR",
+                domain,
+                f"@{domain}"
+            ],
+            timeout=20
+        )
+
+        if (
+            "Transfer failed" not in axfr
+            and "connection timed out" not in axfr.lower()
+            and "not installed" not in axfr.lower()
+            and "timed out" not in axfr.lower()
+            and "XFR size" in axfr
+        ):
+
             findings.append({
-                "source":         "DNS",
-                "type":           "misconfiguration",
-                "title":          "DNS Zone Transfer Enabled (AXFR)",
-                "risk":           "High",
-                "explanation":    "Your DNS server allows zone transfers. This lets anyone download a complete list of all your DNS records, revealing your full internal network structure, all IP addresses, mail servers, and every subdomain you have configured.",
-                "attack":         "Full Network Mapping, Targeted Infrastructure Attacks",
-                "recommendation": "Restrict zone transfers to authorised secondary nameservers only. In BIND add: allow-transfer { <secondary-ip>; }; to your zone config.",
+                "source": "DNS",
+                "type": "misconfiguration",
+                "title": "DNS Zone Transfer May Be Enabled",
+                "risk": "High",
+                "explanation": (
+                    "The DNS server appears to have returned "
+                    "zone transfer data."
+                ),
+                "attack": "DNS information disclosure",
+                "recommendation": (
+                    "Restrict zone transfers to authorised "
+                    "secondary nameservers."
+                )
             })
-    except Exception:
-        pass
 
     return findings
 
+
+# ============================================================
+# SUBDOMAIN ANALYSIS
+# ============================================================
 
 def analyse_subdomains(subdomains, domain):
+
     findings = []
-    flagged = []
+
     sensitive = {
-        "admin":      ("Administrative Panel Exposed",        "Admin portals are high-value targets. A compromise gives full control over the application.", "High"),
-        "vpn":        ("VPN Portal Exposed",                  "An exposed VPN portal is subject to credential brute-force. Compromise gives internal network access.", "High"),
-        "dev":        ("Development Server Exposed",          "Dev servers often have debug mode enabled, weak credentials, and unpatched software.", "High"),
-        "staging":    ("Staging Server Exposed",              "Staging environments often contain real data copies and weaker security configurations.", "High"),
-        "test":       ("Test Server Exposed",                 "Test servers are often poorly secured and may contain vulnerabilities absent from production.", "Medium"),
-        "jenkins":    ("CI/CD Server Exposed (Jenkins)",      "Jenkins exposed to the internet can allow attackers to execute arbitrary code on your build infrastructure.", "Critical"),
-        "gitlab":     ("GitLab Instance Exposed",             "An exposed GitLab instance may leak source code, API keys, passwords, and secrets stored in repositories.", "High"),
-        "git":        ("Git Service Exposed",                 "An exposed version control system may leak source code and stored secrets.", "High"),
-        "jira":       ("Issue Tracker Exposed (Jira)",        "Jira often contains sensitive project details, employee information, and internal system architecture.", "Medium"),
-        "confluence": ("Wiki Exposed (Confluence)",           "Confluence may contain internal documentation, credentials, and architecture details not meant to be public.", "Medium"),
-        "mail":       ("Mail Server Subdomain Detected",      "Ensure the mail server enforces SPF, DKIM, and DMARC records to prevent email spoofing.", "Low"),
-        "ftp":        ("FTP Subdomain Detected",              "FTP subdomains may indicate an insecure unencrypted file transfer service.", "Medium"),
-        "db":         ("Database Subdomain Detected",         "A database subdomain suggests a database server may be directly internet-exposed — a critical risk.", "Critical"),
-        "database":   ("Database Subdomain Detected",         "A database subdomain suggests a database server may be directly internet-exposed.", "Critical"),
+        "admin": ("Administrative Subdomain Detected", "High"),
+        "vpn": ("VPN Subdomain Detected", "High"),
+        "dev": ("Development Subdomain Detected", "High"),
+        "staging": ("Staging Subdomain Detected", "High"),
+        "test": ("Test Subdomain Detected", "Medium"),
+        "jenkins": ("Jenkins Subdomain Detected", "Critical"),
+        "gitlab": ("GitLab Subdomain Detected", "High"),
+        "git": ("Git Service Subdomain Detected", "High"),
+        "jira": ("Jira Subdomain Detected", "Medium"),
+        "confluence": ("Confluence Subdomain Detected", "Medium"),
+        "ftp": ("FTP Subdomain Detected", "Medium"),
+        "db": ("Database Subdomain Detected", "Critical"),
+        "database": ("Database Subdomain Detected", "Critical")
     }
 
-    for sub in subdomains:
-        for keyword, (title, explanation, risk) in sensitive.items():
-            if keyword in sub.lower() and keyword not in flagged:
-                flagged.append(keyword)
+    flagged = set()
+
+    for subdomain in subdomains:
+
+        label = subdomain.split(".")[0].lower()
+
+        for keyword, (title, risk) in sensitive.items():
+
+            if keyword in label and keyword not in flagged:
+
+                flagged.add(keyword)
+
                 findings.append({
-                    "source":         "Subdomains",
-                    "type":           "sensitive_subdomain",
-                    "title":          f"Sensitive Subdomain: {sub}",
-                    "risk":           risk,
-                    "explanation":    explanation,
-                    "attack":         "Targeted Attack, Credential Brute Force, Information Disclosure",
-                    "recommendation": f"Restrict access to {sub} via firewall rules or authentication. Keep it updated and monitored. Consider whether it needs to be publicly accessible at all.",
+                    "source": "Subdomains",
+                    "type": "sensitive_subdomain",
+                    "title": f"{title}: {subdomain}",
+                    "risk": risk,
+                    "explanation": (
+                        f"The subdomain {subdomain} was discovered. "
+                        "Its purpose and access controls should be reviewed."
+                    ),
+                    "attack": (
+                        "Targeted reconnaissance and unauthorised access"
+                    ),
+                    "recommendation": (
+                        "Confirm that the subdomain is intended to be public. "
+                        "Restrict access where appropriate."
+                    )
                 })
+
     return findings
 
 
-# ── CVE findings ──────────────────────────────────────────────────────────────
+# ============================================================
+# CVE FINDINGS
+# ============================================================
 
 def cve_findings(cve_list):
+
     findings = []
-    seen_ids = set()
+    seen = set()
+
     for cve in cve_list:
+
         cid = cve.get("id", "")
-        if cid in seen_ids:
+
+        if not cid or cid in seen:
             continue
-        seen_ids.add(cid)
+
+        seen.add(cid)
+
         try:
-            score_val = float(cve.get("score", 0) or 0)
+            score = float(cve.get("score", 0) or 0)
         except (ValueError, TypeError):
-            score_val = 0
-        svc = cve.get("service", "")
-        if score_val >= 9.0:
-            findings.append({
-                "source":         "CVE",
-                "type":           "cve",
-                "title":          f"Critical CVE: {cid} ({svc})",
-                "risk":           "Critical",
-                "explanation":    cve["desc"],
-                "attack":         f"CVSS score {cve.get('score')} — see NVD for full details",
-                "recommendation": f"Patch or update {svc} immediately to address {cid}. Check the vendor advisory at {cve.get('url', '')}",
-            })
-        elif score_val >= 7.0:
-            findings.append({
-                "source":         "CVE",
-                "type":           "cve",
-                "title":          f"High Severity CVE: {cid} ({svc})",
-                "risk":           "High",
-                "explanation":    cve["desc"],
-                "attack":         f"CVSS score {cve.get('score')} — see NVD for full details",
-                "recommendation": f"Apply security patches for {svc} to address {cid}.",
-            })
-        elif score_val >= 4.0:
-            findings.append({
-                "source":         "CVE",
-                "type":           "cve",
-                "title":          f"Medium CVE: {cid} ({svc})",
-                "risk":           "Medium",
-                "explanation":    cve["desc"],
-                "attack":         f"CVSS score {cve.get('score')}",
-                "recommendation": f"Review and apply available patches for {svc} regarding {cid}.",
-            })
+            score = 0
+
+        if score >= 9:
+            risk = "Critical"
+
+        elif score >= 7:
+            risk = "High"
+
+        elif score >= 4:
+            risk = "Medium"
+
+        else:
+            continue
+
+        findings.append({
+            "source": "CVE",
+            "type": "cve",
+            "title": (
+                f"{risk} CVE: {cid} "
+                f"({cve.get('service', '')})"
+            ),
+            "risk": risk,
+            "explanation": cve.get(
+                "desc",
+                "No description available."
+            ),
+            "attack": f"CVSS score: {score}",
+            "recommendation": (
+                f"Review the affected software and vendor advisory: "
+                f"{cve.get('url', '')}"
+            ),
+            "cpe": cve.get("cpe", "")
+        })
+
     return findings
 
 
-# ── Master intelligence function ──────────────────────────────────────────────
+# ============================================================
+# OVERALL INTELLIGENCE
+# ============================================================
 
-def run_intelligence(domain, nmap_result, whatweb_output,
-                     whois_output, dns_output, subdomains, cve_list):
+def run_intelligence(
+    domain,
+    nmap_result,
+    whatweb_output,
+    whois_output,
+    dns_output,
+    subdomains,
+    cve_list
+):
 
-    all_findings = []
-    all_findings += analyse_ports(nmap_result)
-    all_findings += analyse_whatweb(whatweb_output)
-    all_findings += analyse_whois(whois_output, domain)
-    all_findings += analyse_dns(dns_output, domain)
-    all_findings += analyse_subdomains(subdomains, domain)
-    all_findings += cve_findings(cve_list)
+    findings = []
 
-    risk_order = ["Critical", "High", "Medium", "Low", "Info"]
+    findings.extend(
+        analyse_ports(nmap_result)
+    )
+
+    findings.extend(
+        analyse_whatweb(whatweb_output)
+    )
+
+    findings.extend(
+        analyse_http_headers(domain)
+    )
+
+    findings.extend(
+        analyse_whois(whois_output, domain)
+    )
+
+    findings.extend(
+        analyse_dns(dns_output, domain)
+    )
+
+    findings.extend(
+        analyse_subdomains(subdomains, domain)
+    )
+
+    findings.extend(
+        cve_findings(cve_list)
+    )
+
+    risk_order = [
+        "Critical",
+        "High",
+        "Medium",
+        "Low",
+        "Info"
+    ]
+
     risk_label = "Low"
-    for lvl in risk_order:
-        if any(f.get("risk") == lvl for f in all_findings):
-            risk_label = lvl
+
+    for level in risk_order:
+
+        if any(
+            item.get("risk") == level
+            for item in findings
+        ):
+
+            risk_label = level
             break
 
-    severity_counts = {"Critical": 0, "High": 0,
-                       "Medium": 0, "Low": 0, "Info": 0}
-    for f in all_findings:
-        r = f.get("risk", "Info")
-        if r in severity_counts:
-            severity_counts[r] += 1
+    severity_counts = {
+        "Critical": 0,
+        "High": 0,
+        "Medium": 0,
+        "Low": 0,
+        "Info": 0
+    }
+
+    for item in findings:
+
+        level = item.get("risk", "Info")
+
+        if level in severity_counts:
+            severity_counts[level] += 1
 
     return {
-        "findings":        all_findings,
-        "risk_label":      risk_label,
+        "findings": findings,
+        "risk_label": risk_label,
         "severity_counts": severity_counts,
-        "total_findings":  len(all_findings),
+        "total_findings": len(findings)
     }
 
 
-# ── Report generators ─────────────────────────────────────────────────────────
+# ============================================================
+# REPORT GENERATION
+# ============================================================
 
 def save_txt(scan, filename, intel):
-    path = os.path.join(reports, filename)
-    with open(path, "w") as f:
-        f.write(f"WEBRECON SECURITY REPORT — {scan.domain}\n{'='*60}\n\n")
-        f.write(f"IP        : {scan.ip}\n")
-        f.write(f"Profile   : {scan.profile}\n")
-        f.write(f"Risk Level: {intel['risk_label']}\n")
-        f.write(f"Findings  : {intel['total_findings']}\n")
-        f.write(f"Time      : {scan.ran_at}\n\n")
-        f.write(f"FINDINGS ({intel['total_findings']} total)\n{'-'*40}\n")
-        for fd in intel["findings"]:
-            f.write(f"\n[{fd['risk']}] {fd['title']}\n")
-            f.write(f"Source : {fd['source']}\n")
-            f.write(f"Explain: {fd['explanation']}\n")
-            if fd.get("attack"):
-                f.write(f"Attacks: {fd['attack']}\n")
-            f.write(f"Fix    : {fd['recommendation']}\n")
-        f.write(f"\nRAW SCAN DATA\n{'-'*40}\n")
-        f.write(f"SUBDOMAINS\n{scan.subdomains or 'None'}\n\n")
-        f.write(f"DNS\n{scan.dns or ''}\n\n")
-        f.write(f"NMAP\n{scan.nmap or ''}\n\n")
-        f.write(f"WHATWEB\n{scan.whatweb or ''}\n\n")
-        f.write(f"WHOIS\n{scan.whois or ''}\n")
+
+    path = REPORTS_DIR / filename
+
+    with open(path, "w", encoding="utf-8") as file:
+
+        file.write(
+            f"WEBRECON SECURITY REPORT — {scan.domain}\n"
+        )
+
+        file.write("=" * 60 + "\n\n")
+
+        file.write(f"IP: {scan.ip}\n")
+        file.write(f"Profile: {scan.profile}\n")
+        file.write(f"Risk Level: {intel['risk_label']}\n")
+        file.write(f"Findings: {intel['total_findings']}\n")
+        file.write(f"Time: {scan.ran_at}\n\n")
+
+        file.write("FINDINGS\n")
+        file.write("-" * 40 + "\n")
+
+        for finding in intel["findings"]:
+
+            file.write(
+                f"\n[{finding['risk']}] {finding['title']}\n"
+            )
+
+            file.write(
+                f"Source: {finding['source']}\n"
+            )
+
+            file.write(
+                f"Explanation: {finding['explanation']}\n"
+            )
+
+            if finding.get("attack"):
+                file.write(
+                    f"Attack: {finding['attack']}\n"
+                )
+
+            file.write(
+                f"Recommendation: {finding['recommendation']}\n"
+            )
+
+        file.write("\nRAW SCAN DATA\n")
+        file.write("-" * 40 + "\n")
+
+        file.write(
+            f"\nDNS\n{scan.dns or ''}\n"
+        )
+
+        file.write(
+            f"\nNMAP\n{scan.nmap or ''}\n"
+        )
+
+        file.write(
+            f"\nWHATWEB\n{scan.whatweb or ''}\n"
+        )
+
+        file.write(
+            f"\nWHOIS\n{scan.whois or ''}\n"
+        )
+
+        file.write(
+            f"\nSUBDOMAINS\n{scan.subdomains or 'None'}\n"
+        )
+
+        file.write(
+            f"\nCVE DATA\n{scan.cves or '[]'}\n"
+        )
+
     return filename
 
 
 def save_html(scan, filename, intel):
-    path = os.path.join(reports, filename)
-    risk_color = {
-        "Critical": "#E74C3C", "High":   "#E67E22",
-        "Medium":   "#F39C12", "Low":    "#27AE60", "Info": "#3498DB"
+
+    path = REPORTS_DIR / filename
+
+    def esc(value):
+        return html.escape(str(value or ""))
+
+    risk_colors = {
+        "Critical": "#E74C3C",
+        "High": "#E67E22",
+        "Medium": "#F39C12",
+        "Low": "#27AE60",
+        "Info": "#3498DB"
     }
-    label_col = risk_color.get(intel["risk_label"], "#888")
+
+    risk_label = intel["risk_label"]
+
+    label_color = risk_colors.get(
+        risk_label,
+        "#888"
+    )
 
     findings_html = ""
-    for fd in intel["findings"]:
-        col = risk_color.get(fd["risk"], "#888")
-        attack_row = f"<tr><td><b>Attack types</b></td><td>{fd.get('attack', '')}</td></tr>" if fd.get(
-            "attack") else ""
-        version_row = f"<tr><td><b>Version</b></td><td>{fd.get('version', '')}</td></tr>" if fd.get(
-            "version") else ""
-        exp_row = fd.get("expiry_date", "")
-        expiry_row = f"<tr><td><b>Expiry</b></td><td>{exp_row} ({fd.get('days_left', '')} days)</td></tr>" if exp_row else ""
+
+    for finding in intel["findings"]:
+
+        risk = finding.get("risk", "Info")
+
+        color = risk_colors.get(
+            risk,
+            "#888"
+        )
+
+        attack_row = ""
+
+        if finding.get("attack"):
+
+            attack_row = (
+                "<tr><td><b>Attack types</b></td>"
+                f"<td>{esc(finding.get('attack'))}</td></tr>"
+            )
+
+        cpe_row = ""
+
+        if finding.get("cpe"):
+
+            cpe_row = (
+                "<tr><td><b>CPE</b></td>"
+                f"<td>{esc(finding.get('cpe'))}</td></tr>"
+            )
+
         findings_html += f"""
         <div class="finding">
-            <div class="finding-header" style="border-left:4px solid {col}">
-                <span class="badge" style="background:{col}">{fd['risk']}</span>
-                <b>{fd['title']}</b>
-                <span class="source-tag">{fd['source']}</span>
+
+            <div class="finding-header"
+                 style="border-left:4px solid {color}">
+
+                <span class="badge"
+                      style="background:{color}">
+                    {esc(risk)}
+                </span>
+
+                <b>{esc(finding.get('title'))}</b>
+
+                <span class="source-tag">
+                    {esc(finding.get('source'))}
+                </span>
+
             </div>
+
             <table class="finding-table">
-                <tr><td><b>Explanation</b></td><td>{fd['explanation']}</td></tr>
-                {attack_row}{version_row}{expiry_row}
-                <tr><td><b>Fix</b></td><td>{fd['recommendation']}</td></tr>
+
+                <tr>
+                    <td><b>Explanation</b></td>
+                    <td>{esc(finding.get('explanation'))}</td>
+                </tr>
+
+                {attack_row}
+
+                {cpe_row}
+
+                <tr>
+                    <td><b>Fix</b></td>
+                    <td>{esc(finding.get('recommendation'))}</td>
+                </tr>
+
             </table>
-        </div>"""
 
-    sc = intel["severity_counts"]
-    subs = (scan.subdomains or "None").replace("\n", "<br>")
+        </div>
+        """
 
-    html = f"""<!DOCTYPE html>
-<html><head><title>Security Report — {scan.domain}</title>
+    counts = intel["severity_counts"]
+
+    raw_sections = {
+        "DNS": scan.dns,
+        "Nmap": scan.nmap,
+        "WhatWeb": scan.whatweb,
+        "WHOIS": scan.whois,
+        "Subdomains": scan.subdomains,
+        "CVE Data": scan.cves
+    }
+
+    raw_html = ""
+
+    for name, value in raw_sections.items():
+
+        raw_html += f"""
+        <h3>{esc(name)}</h3>
+        <pre>{esc(value)}</pre>
+        """
+
+    report = f"""<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0">
+
+<title>Security Report — {esc(scan.domain)}</title>
+
 <style>
-body{{font-family:Arial,sans-serif;margin:40px;background:#0f1117;color:#ccc;}}
-h1{{color:#fff;}} h2{{color:#3B9EE8;border-bottom:1px solid #222;padding-bottom:8px;}}
-.risk-label{{display:inline-block;padding:8px 20px;font-size:1.4rem;font-weight:bold;
-  border-radius:6px;color:#fff;background:{label_col};margin:8px 0;}}
-.finding{{background:#161b22;border-radius:6px;margin:12px 0;overflow:hidden;}}
-.finding-header{{padding:12px 16px;display:flex;align-items:center;gap:10px;background:#1a2130;}}
-.badge{{padding:2px 8px;border-radius:4px;color:#fff;font-size:12px;font-weight:bold;}}
-.source-tag{{margin-left:auto;font-size:11px;color:#888;background:#222;padding:2px 8px;border-radius:4px;}}
-.finding-table{{width:100%;border-collapse:collapse;font-size:13px;}}
-.finding-table td{{padding:8px 16px;border-bottom:1px solid #222;vertical-align:top;}}
-.finding-table td:first-child{{width:120px;color:#888;white-space:nowrap;}}
-.sev-grid{{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:16px 0;}}
-.sev-card{{text-align:center;padding:12px;border-radius:6px;background:#161b22;}}
-.sev-card .num{{font-size:1.8rem;font-weight:bold;}}
-pre{{background:#161b22;padding:12px;overflow-x:auto;font-size:12px;border-radius:4px;}}
-</style></head><body>
-<h1>Security Report — {scan.domain}</h1>
-<p>IP: {scan.ip} | Profile: {scan.profile} | Scanned: {scan.ran_at}</p>
-<h2>Overall Risk</h2>
-<div class="risk-label">{intel['risk_label']}</div>
-<p style="color:#888">{intel['total_findings']} findings</p>
-<div class="sev-grid">
-  <div class="sev-card"><div class="num" style="color:#E74C3C">{sc['Critical']}</div><div>Critical</div></div>
-  <div class="sev-card"><div class="num" style="color:#E67E22">{sc['High']}</div><div>High</div></div>
-  <div class="sev-card"><div class="num" style="color:#F39C12">{sc['Medium']}</div><div>Medium</div></div>
-  <div class="sev-card"><div class="num" style="color:#27AE60">{sc['Low']}</div><div>Low</div></div>
-  <div class="sev-card"><div class="num" style="color:#3498DB">{sc['Info']}</div><div>Info</div></div>
-</div>
-<h2>Findings ({intel['total_findings']})</h2>
-{findings_html}
-<h2>Raw Scan Data</h2>
-<h3>Subdomains</h3><p>{subs}</p>
-<h3>DNS</h3><pre>{scan.dns}</pre>
-<h3>Nmap</h3><pre>{scan.nmap}</pre>
-<h3>WhatWeb</h3><pre>{scan.whatweb}</pre>
-<h3>WHOIS</h3><pre>{scan.whois}</pre>
-</body></html>"""
 
-    with open(path, "w") as f:
-        f.write(html)
+body {{
+    font-family: Arial, sans-serif;
+    margin: 40px;
+    background: #0f1117;
+    color: #ccc;
+}}
+
+h1 {{
+    color: #fff;
+}}
+
+h2 {{
+    color: #3B9EE8;
+    border-bottom: 1px solid #333;
+    padding-bottom: 8px;
+}}
+
+.risk-label {{
+    display: inline-block;
+    padding: 8px 20px;
+    font-size: 1.4rem;
+    font-weight: bold;
+    border-radius: 6px;
+    color: #fff;
+    background: {label_color};
+}}
+
+.finding {{
+    background: #161b22;
+    border-radius: 6px;
+    margin: 12px 0;
+    overflow: hidden;
+}}
+
+.finding-header {{
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #1a2130;
+    flex-wrap: wrap;
+}}
+
+.badge {{
+    padding: 3px 8px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: bold;
+}}
+
+.source-tag {{
+    margin-left: auto;
+    font-size: 11px;
+    color: #aaa;
+}}
+
+.finding-table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}}
+
+.finding-table td {{
+    padding: 10px 16px;
+    border-bottom: 1px solid #222;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+}}
+
+.finding-table td:first-child {{
+    width: 120px;
+    color: #aaa;
+}}
+
+.sev-grid {{
+    display: grid;
+    grid-template-columns: repeat(
+        auto-fit,
+        minmax(100px, 1fr)
+    );
+    gap: 10px;
+    margin: 16px 0;
+}}
+
+.sev-card {{
+    text-align: center;
+    padding: 12px;
+    border-radius: 6px;
+    background: #161b22;
+}}
+
+.sev-card .num {{
+    font-size: 1.8rem;
+    font-weight: bold;
+}}
+
+pre {{
+    background: #161b22;
+    padding: 12px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+    border-radius: 4px;
+}}
+
+@media(max-width: 600px) {{
+    body {{
+        margin: 15px;
+    }}
+}}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>Security Report — {esc(scan.domain)}</h1>
+
+<p>
+IP: {esc(scan.ip)} |
+Profile: {esc(scan.profile)} |
+Scanned: {esc(scan.ran_at)}
+</p>
+
+<h2>Overall Risk</h2>
+
+<div class="risk-label">
+    {esc(risk_label)}
+</div>
+
+<p>{intel['total_findings']} findings</p>
+
+<div class="sev-grid">
+
+    <div class="sev-card">
+        <div class="num" style="color:#E74C3C">
+            {counts['Critical']}
+        </div>
+        <div>Critical</div>
+    </div>
+
+    <div class="sev-card">
+        <div class="num" style="color:#E67E22">
+            {counts['High']}
+        </div>
+        <div>High</div>
+    </div>
+
+    <div class="sev-card">
+        <div class="num" style="color:#F39C12">
+            {counts['Medium']}
+        </div>
+        <div>Medium</div>
+    </div>
+
+    <div class="sev-card">
+        <div class="num" style="color:#27AE60">
+            {counts['Low']}
+        </div>
+        <div>Low</div>
+    </div>
+
+    <div class="sev-card">
+        <div class="num" style="color:#3498DB">
+            {counts['Info']}
+        </div>
+        <div>Info</div>
+    </div>
+
+</div>
+
+<h2>Findings ({intel['total_findings']})</h2>
+
+{findings_html}
+
+<h2>Raw Scan Data</h2>
+
+{raw_html}
+
+</body>
+</html>
+"""
+
+    with open(path, "w", encoding="utf-8") as file:
+        file.write(report)
+
     return filename
 
 
-# ── Auth routes ───────────────────────────────────────────────────────────────
+# ============================================================
+# AUTH ROUTES
+# ============================================================
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+
     if request.method == "POST":
-        username = request.form["username"].strip()
-        password = request.form["password"].strip()
+
+        username = request.form.get(
+            "username",
+            ""
+        ).strip()
+
+        password = request.form.get(
+            "password",
+            ""
+        ).strip()
+
         if not username or not password:
-            flash("Fill in both fields.", "danger")
+
+            flash(
+                "Fill in both fields.",
+                "danger"
+            )
+
             return redirect(url_for("register"))
+
+        if len(username) > 80:
+
+            flash(
+                "Username is too long.",
+                "danger"
+            )
+
+            return redirect(url_for("register"))
+
+        if len(password) < 8:
+
+            flash(
+                "Password must contain at least 8 characters.",
+                "danger"
+            )
+
+            return redirect(url_for("register"))
+
         if User.query.filter_by(username=username).first():
-            flash("That username is taken.", "danger")
+
+            flash(
+                "That username is already taken.",
+                "danger"
+            )
+
             return redirect(url_for("register"))
-        u = User(username=username)
-        u.set_password(password)
-        db.session.add(u)
+
+        user = User(username=username)
+
+        user.set_password(password)
+
+        db.session.add(user)
         db.session.commit()
-        flash("Account created. Log in.", "success")
+
+        flash(
+            "Account created. Log in.",
+            "success"
+        )
+
         return redirect(url_for("login"))
-    return render_template("auth.html", mode="register")
+
+    return render_template(
+        "auth.html",
+        mode="register"
+    )
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
+
     if request.method == "POST":
-        username = request.form["username"].strip()
-        password = request.form["password"].strip()
-        u = User.query.filter_by(username=username).first()
-        if u and u.check_password(password):
-            session["uid"] = u.id
+
+        username = request.form.get(
+            "username",
+            ""
+        ).strip()
+
+        password = request.form.get(
+            "password",
+            ""
+        ).strip()
+
+        user = User.query.filter_by(
+            username=username
+        ).first()
+
+        if user and user.check_password(password):
+
+            session.clear()
+
+            session["uid"] = user.id
+
             return redirect(url_for("index"))
-        flash("Wrong username or password.", "danger")
-    return render_template("auth.html", mode="login")
+
+        flash(
+            "Wrong username or password.",
+            "danger"
+        )
+
+    return render_template(
+        "auth.html",
+        mode="login"
+    )
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET", "POST"])
 def logout():
+
     session.clear()
+
     return redirect(url_for("login"))
 
 
-# ── Main scan route ───────────────────────────────────────────────────────────
+# ============================================================
+# MAIN SCAN ROUTE
+# ============================================================
 
 @app.route("/", methods=["GET", "POST"])
 @login_required
 def index():
+
     user = get_user()
+
     data = {}
     error = None
 
     if request.method == "POST":
-        domain = request.form["domain"].strip()
-        profile = request.form.get("profile", "safe")
+
+        domain = request.form.get(
+            "domain",
+            ""
+        ).strip().lower()
+
+        profile = request.form.get(
+            "profile",
+            "safe"
+        ).lower()
 
         if not valid_domain(domain):
+
             error = "Invalid domain."
+
+        elif profile not in {
+            "safe",
+            "normal",
+            "advanced"
+        }:
+
+            error = "Invalid scan profile."
+
         else:
-            dns_out = shell(["nslookup", domain])
-            ip = get_ip(dns_out)
 
-            def run_nmap():
-                if profile == "normal" and ip:
-                    return shell(["nmap", "-sV", "-p", "1-1000",
-                                  "--min-rate", "5000", "--max-retries", "1",
-                                  "--open", ip])
-                elif profile == "advanced" and ip:
-                    return shell(["nmap", "-p", "1-65535", "-sV",
-                                  "--min-rate", "5000", "--max-retries", "1",
-                                  "--open", ip])
-                return "Skipped (safe profile)"
+            ip = resolve_ip(domain)
 
-            with ThreadPoolExecutor(max_workers=4) as ex:
-                fw = ex.submit(shell,          ["whois", ip if ip else domain])
-                fww = ex.submit(run_whatweb,    domain)
-                fs = ex.submit(get_subdomains, domain, profile)
-                fn = ex.submit(run_nmap)
-                whois_out = fw.result()
-                whatweb_out = fww.result()
-                subs = fs.result()
-                nmap_out = fn.result()
+            dns_output = get_dns(domain)
 
-            result = parse_nmap(nmap_out)
+            # Run independent scan modules concurrently.
+
+            with ThreadPoolExecutor(max_workers=4) as executor:
+
+                whois_future = executor.submit(
+                    run_whois,
+                    domain
+                )
+
+                whatweb_future = executor.submit(
+                    run_whatweb,
+                    domain
+                )
+
+                subdomains_future = executor.submit(
+                    get_subdomains,
+                    domain,
+                    profile
+                )
+
+                nmap_future = executor.submit(
+                    run_nmap,
+                    domain,
+                    profile
+                )
+
+                whois_output = whois_future.result()
+
+                whatweb_output = whatweb_future.result()
+
+                subdomains = subdomains_future.result()
+
+                # Nmap now returns both XML and normal output.
+
+                nmap_run = nmap_future.result()
+
+            # XML is used internally for parsing and CVE detection.
+
+            nmap_xml = nmap_run["xml"]
+
+            # Normal Nmap output is used in reports and database.
+
+            nmap_display = nmap_run["normal"]
+
+            nmap_result = parse_nmap(nmap_xml)
+
+            # Determine whether Nmap failed.
+
+            nmap_failed = (
+                not nmap_xml.strip()
+                or nmap_run.get("returncode") != 0
+                or bool(nmap_run.get("error"))
+            )
+
+            if nmap_failed:
+
+                nmap_result = {
+                    "count": 0,
+                    "ports": [],
+                    "services": [],
+                    "versions": [],
+                    "risk": "Info",
+                    "reason": (
+                        nmap_run.get("error")
+                        or nmap_display
+                        or "Nmap did not return valid scan results."
+                    )
+                }
+
+            # Safe profile intentionally skips Nmap.
+
+            if nmap_run.get("skipped"):
+
+                nmap_result = {
+                    "count": 0,
+                    "ports": [],
+                    "services": [],
+                    "versions": [],
+                    "risk": "Info",
+                    "reason": "Nmap skipped because the safe profile was selected."
+                }
+
+            # Use detected software CPEs, not generic service names.
+
             cve_list = get_cves(
-                result["services"]) if result["services"] else []
-            intel = run_intelligence(domain, result, whatweb_out,
-                                     whois_out, dns_out, subs, cve_list)
+                nmap_result["versions"]
+            )
+
+            intelligence = run_intelligence(
+                domain,
+                nmap_result,
+                whatweb_output,
+                whois_output,
+                dns_output,
+                subdomains,
+                cve_list
+            )
 
             now = datetime.utcnow()
-            base_name = f"{domain}_{now.strftime('%Y%m%d_%H%M%S')}"
+
+            report_base = (
+                f"{domain}_"
+                f"{now.strftime('%Y%m%d_%H%M%S_%f')}"
+            )
 
             scan = Scan(
                 user_id=user.id,
                 domain=domain,
                 ip=ip,
                 profile=profile,
-                risk=intel["risk_label"],
-                port_count=result["count"],
-                services=", ".join(result["services"]),
-                dns=dns_out,
-                whois=whois_out,
-                nmap=nmap_out,
-                whatweb=whatweb_out,
+                risk=intelligence["risk_label"],
+                port_count=nmap_result["count"],
+                services=", ".join(
+                    nmap_result["services"]
+                ),
+                dns=dns_output,
+                whois=whois_output,
+
+                # IMPORTANT:
+                # Save normal output, not XML.
+
+                nmap=nmap_display,
+
+                whatweb=whatweb_output,
                 cves=json.dumps(cve_list),
-                subdomains="\n".join(subs),
-                intelligence=json.dumps(intel),
-                report_txt=base_name + ".txt",
-                report_html=base_name + ".html",
+                subdomains="\n".join(subdomains),
+                intelligence=json.dumps(intelligence),
+                report_txt=report_base + ".txt",
+                report_html=report_base + ".html",
                 ran_at=now
             )
+
             db.session.add(scan)
             db.session.commit()
 
-            save_txt(scan, scan.report_txt, intel)
-            save_html(scan, scan.report_html, intel)
+            save_txt(
+                scan,
+                scan.report_txt,
+                intelligence
+            )
+
+            save_html(
+                scan,
+                scan.report_html,
+                intelligence
+            )
 
             data = {
-                "scan":   scan,
-                "result": result,
-                "cves":   cve_list,
-                "subs":   subs,
-                "intel":  intel,
+                "scan": scan,
+                "result": nmap_result,
+                "cves": cve_list,
+                "subs": subdomains,
+                "intel": intelligence
             }
 
-    history = (Scan.query
-               .filter_by(user_id=user.id)
-               .order_by(Scan.ran_at.desc())
-               .limit(10).all())
-    return render_template("index.html",
-                           data=data, error=error, user=user, history=history)
+    history = (
+        Scan.query
+        .filter_by(user_id=user.id)
+        .order_by(Scan.ran_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    return render_template(
+        "index.html",
+        data=data,
+        error=error,
+        user=user,
+        history=history
+    )
 
 
-# ── Dashboard ─────────────────────────────────────────────────────────────────
+# ============================================================
+# DASHBOARD
+# ============================================================
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
+
     user = get_user()
-    scans = (Scan.query
-             .filter_by(user_id=user.id)
-             .order_by(Scan.ran_at.desc()).all())
-    risk_counts = {"Low": 0, "Medium": 0, "High": 0, "Critical": 0}
-    for s in scans:
-        risk_counts[s.risk] = risk_counts.get(s.risk, 0) + 1
-    return render_template("dashboard.html",
-                           user=user, scans=scans, risk_counts=risk_counts)
+
+    scans = (
+        Scan.query
+        .filter_by(user_id=user.id)
+        .order_by(Scan.ran_at.desc())
+        .all()
+    )
+
+    risk_counts = {
+        "Low": 0,
+        "Medium": 0,
+        "High": 0,
+        "Critical": 0
+    }
+
+    for scan in scans:
+
+        risk = scan.risk or "Low"
+
+        risk_counts[risk] = (
+            risk_counts.get(risk, 0) + 1
+        )
+
+    return render_template(
+        "dashboard.html",
+        user=user,
+        scans=scans,
+        risk_counts=risk_counts
+    )
 
 
-# ── Reports ───────────────────────────────────────────────────────────────────
+# ============================================================
+# REPORT ACCESS
+# ============================================================
+
+def get_owned_report(filename):
+
+    # Prevent directory traversal.
+
+    if not filename or Path(filename).name != filename:
+        abort(404)
+
+    user = get_user()
+
+    if not user:
+        abort(404)
+
+    scan = Scan.query.filter(
+        Scan.user_id == user.id,
+        or_(
+            Scan.report_txt == filename,
+            Scan.report_html == filename
+        )
+    ).first()
+
+    if not scan:
+        abort(404)
+
+    return scan
+
 
 @app.route("/report/view/<filename>")
 @login_required
 def view_report(filename):
-    return send_from_directory(reports, filename)
+
+    get_owned_report(filename)
+
+    return send_from_directory(
+        str(REPORTS_DIR),
+        filename
+    )
 
 
 @app.route("/report/download/<filename>")
 @login_required
 def download_report(filename):
-    return send_from_directory(reports, filename, as_attachment=True)
+
+    get_owned_report(filename)
+
+    return send_from_directory(
+        str(REPORTS_DIR),
+        filename,
+        as_attachment=True
+    )
 
 
-# ── Init ──────────────────────────────────────────────────────────────────────
+# ============================================================
+# TOOL STATUS
+# ============================================================
+
+@app.route("/tools")
+@login_required
+def tools_status():
+
+    return {
+        "platform": platform.system(),
+        "tools": tool_status()
+    }
+
+
+# ============================================================
+# INITIALISE DATABASE
+# ============================================================
 
 with app.app_context():
     db.create_all()
 
+
+# ============================================================
+# RUN APPLICATION
+# ============================================================
+
 if __name__ == "__main__":
-    app.run(debug=True)
+
+    debug_mode = (
+        os.environ.get("FLASK_DEBUG", "1") == "1"
+    )
+
+    app.run(
+        host="127.0.0.1",
+        port=5000,
+        debug=debug_mode
+    )
